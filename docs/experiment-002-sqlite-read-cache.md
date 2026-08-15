@@ -26,13 +26,13 @@ uv run python benchmarks/bench_sqlite_reads.py --nodes 1000 --reads 100 --repeat
 
 The benchmark compares the optimized path with an in-process copy of the prior
 full-materialization refresh algorithm. It is a control, not production code.
-On macOS arm64, Python 3.14.5, this run produced:
+On macOS arm64, Python 3.14.5, the latest checked-in run produced:
 
 ```json
 {
-  "baseline_median_ms": 360.745,
-  "optimized_median_ms": 0.414,
-  "speedup": 871.4,
+  "baseline_median_ms": 340.975,
+  "optimized_median_ms": 0.450,
+  "speedup": 757.3,
   "nodes": 1000,
   "reads": 100,
   "repeats": 5
@@ -44,7 +44,7 @@ JSON decoding and invariant validation, not a semantic shortcut. The focused
 test `test_sqlite_reads_skip_snapshot_materialization_when_revision_is_unchanged`
 asserts no materialization for stable repeated reads, while
 `test_sqlite_fast_read_path_still_refreshes_other_instance` covers visibility
-of another handle's commit. Full suite result: `72 passed` (`uv run pytest -q`).
+of another handle's commit. Current suite result: `84 passed` (`uv run pytest -q`).
 
 **Reversibility and limits.** The change is isolated to the SQLite adapter and
 can be reverted as one `_refresh`/validator patch. Every operation still checks

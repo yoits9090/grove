@@ -62,16 +62,19 @@ shape, operation counts, and reopen statistics.
 
 ## Third-cycle evidence
 
-Snapshot query tests now cover recursive and direct-child traversal, typed
-criteria (`bool` versus `int`), detached query results, immutable query snapshots,
-and lightweight property indexes. Extended fuzz coverage exercises Unicode,
+Snapshot query tests cover recursive and direct-child traversal, typed criteria
+(`bool` versus `int`), detached query results, immutable query snapshots, and
+lightweight property indexes. Extended fuzz coverage exercises Unicode,
 deep/broad trees, invalid paths, hostile JSON/tags, malformed SQLite rows, and
-model invariants. The suite currently passes 72 tests.
+model invariants. The current suite collects 85 tests and passes with
+`uv run pytest -q`.
 
 A SQLite read-cache experiment uses `PRAGMA data_version` plus durable revision
-validation to avoid rematerializing unchanged snapshots. At 300 nodes/50 reads,
-the local comparison measured 54.422 ms baseline versus 0.232 ms cached median
-(234.5x); this is a machine-specific observational result.
+validation to avoid rematerializing unchanged snapshots. The checked-in
+1,000-node/100-read control run measured 340.975 ms baseline versus 0.450 ms
+cached median (757.3x); this is a machine-specific observational result. See
+`docs/experiment-002-sqlite-read-cache.md` for the reproduction command and
+limits.
 
 
 ## Fourth-cycle evidence
@@ -79,7 +82,8 @@ the local comparison measured 54.422 ms baseline versus 0.232 ms cached median
 A disposable SQLite scalar-property index experiment stores typed scalar keys
 in an attached sidecar and rebuilds them atomically with tree commits. It
 preserves exact GROVE semantics by finalizing through the normal materialized
-query. At 200 nodes/50 lookups, the baseline materialized path measured 51.519
-ms median versus 67.136 ms for the indexed experiment (0.767x), demonstrating
-that an index without an accelerated snapshot/query executor is not yet useful.
-The experiment remains isolated pending a workload-driven design.
+query. In the checked-in 200-node/20-group/50-read/5-repeat run, the baseline
+materialized path measured 54.758 ms median versus 69.178 ms for the indexed
+experiment (0.792x), demonstrating that an index without an accelerated
+snapshot/query executor is not yet useful. The experiment remains isolated
+pending a workload-driven design.
