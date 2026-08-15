@@ -58,3 +58,17 @@ contains 34 tests and passes repeatedly. Workload families in
 `benchmarks/bench.py` now include `random`, `deep`, `broad`, `skew`, and
 `reopen`, with bounded deterministic JSON output including configuration,
 shape, operation counts, and reopen statistics.
+
+
+## Third-cycle evidence
+
+Snapshot query tests now cover recursive and direct-child traversal, typed
+criteria (`bool` versus `int`), detached query results, immutable query snapshots,
+and lightweight property indexes. Extended fuzz coverage exercises Unicode,
+deep/broad trees, invalid paths, hostile JSON/tags, malformed SQLite rows, and
+model invariants. The suite currently passes 72 tests.
+
+A SQLite read-cache experiment uses `PRAGMA data_version` plus durable revision
+validation to avoid rematerializing unchanged snapshots. At 300 nodes/50 reads,
+the local comparison measured 54.422 ms baseline versus 0.232 ms cached median
+(234.5x); this is a machine-specific observational result.

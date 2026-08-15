@@ -17,7 +17,9 @@
    enough for correctness comparison but still rewrites the logical tree per
    commit.
 5. Query API and secondary indexes, designed against a reference evaluator.
-6. Better event batches/subtree change summaries and subscription backpressure.
+6. **Complete reference phase:** snapshot queries, typed predicate filtering, and
+   lightweight in-memory property indexes. SQLite-backed durable property
+   indexes remain deferred until query workloads justify schema complexity.
 
 ## Later: ambitious experiments (disposable branches)
 

@@ -251,19 +251,19 @@ class PropertyIndex:
         self._mapping: dict[Any, frozenset[str]] = {}
 
     def _state_mapping(self, state: dict[str, Any]) -> dict[Any, frozenset[str]]:
-        # Store versions are monotonic for every supported backend.  Rebuild
-        # only after a commit; this is deliberately simpler and safer than
-        # trying to interpret every mutation operation incrementally.
-        revision = getattr(self.store, "_version", None)
-        if revision != self._revision:
-            mutable: dict[Any, set[str]] = {}
-            for node_id, record in state["nodes"].items():
-                value = _property_value(record["properties"], self.property_name)
-                if value is _MISSING:
-                    continue
-                mutable.setdefault(_index_key(value), set()).add(node_id)
-            self._mapping = {key: frozenset(ids) for key, ids in mutable.items()}
-            self._revision = revision
+        # Build from the exact state passed by the caller.  A store can commit
+        # between copying a query snapshot and inspecting its revision, so a
+        # revision-only cache could accidentally label an older mapping as
+        # current.  Rebuilding this intentionally small index is safer and
+        # keeps lookup results tied to one coherent snapshot.
+        mutable: dict[Any, set[str]] = {}
+        for node_id, record in state["nodes"].items():
+            value = _property_value(record["properties"], self.property_name)
+            if value is _MISSING:
+                continue
+            mutable.setdefault(_index_key(value), set()).add(node_id)
+        self._mapping = {key: frozenset(ids) for key, ids in mutable.items()}
+        self._revision = getattr(self.store, "_version", None)
         return self._mapping
 
     def lookup(
