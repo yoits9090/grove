@@ -206,6 +206,8 @@ def _snapshot_json(state: dict[str, Any]) -> bytes:
 def _snapshot_from_json(payload: bytes) -> dict[str, Any]:
     try:
         raw = json.loads(payload.decode("utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError("snapshot must be a JSON object")
         if raw.get("format") != 1 or not isinstance(raw.get("nodes"), dict):
             raise ValueError("unknown snapshot format")
         root_id = _validate_id(raw["root_id"])

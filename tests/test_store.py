@@ -4,6 +4,7 @@ import pytest
 from grove import (TreeStore, PersistentTreeStore, Reference, AlreadyExistsError,
                    InvalidOperationError, InvalidPropertyError, NotFoundError,
                    StorageCorruptionError)
+from grove.store import _snapshot_from_json
 
 def test_basic_identity_path_order_and_move():
     db=TreeStore()
@@ -269,4 +270,11 @@ def test_timestamp_order_compares_instants_across_timezones():
     tx._state["nodes"][node.id]["modified_at"] = "2020-01-01T00:30:00+05:00"
     with pytest.raises(InvalidOperationError, match="modified_at cannot precede"):
         tx.commit()
+
+
+
+def test_snapshot_json_scalar_fails_as_storage_corruption():
+    for payload in (b"null", b"[]", b"3", b'"text"', b"true"):
+        with pytest.raises(StorageCorruptionError):
+            _snapshot_from_json(payload)
 
