@@ -82,3 +82,72 @@ first gain a larger-workload benchmark, a conflict/out-of-band mutation matrix,
 and a design for avoiding full old-state materialization (for example, a
 transaction change journal or row-level digest). Keep the class isolated until
 those measurements show that the added diff complexity is worthwhile.
+
+
+## Bounded workload matrix (follow-up)
+
+The isolated leaf result above is not representative of structural edits, so a
+small workload matrix was run before deciding whether to continue the
+prototype.  The protocol used Python 3.14.5 on macOS 26.5.1 arm64, 256
+non-root nodes, three repetitions per case, and fresh temporary databases for
+each adapter.  Each adapter received the same deterministic tree and mutation
+sequence.  `sqlite3.Connection.total_changes` is the row-write measure and
+includes the one metadata-row revision update; the dirty adapter's
+`last_commit_stats.rows_written` is tree rows only.  The reported row counts
+below are therefore deliberately conservative (they include metadata).
+
+* **deep:** one chain;
+* **broad:** all nodes are ordered children of root;
+* **skew:** deterministic early-parent selection with exponent 4 and a 10%
+  root probability;
+* **reopen-like:** the same sequence, but close/reopen after every commit;
+* mutation sequence: isolated leaf update, rename and rename-back, move to root
+  and back (or root reorder), nested-property update, leaf delete/create, and a
+  no-op update.  This is 8--10 commits depending on shape.
+
+The latest bounded run produced these medians (milliseconds and logical SQLite
+row changes):
+
+| shape | mode | full commit p50 / p95 ms | dirty commit p50 / p95 ms | full rows p50 (total) | dirty rows p50 (total) | p50 row reduction | p50 time speedup |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| deep | mutations | 10.523 / 13.219 | 9.217 / 13.040 | 770 (23,124) | 3 (114) | 256.7x | 1.142x |
+| broad | mutations | 5.952 / 8.942 | 4.762 / 6.770 | 770 (18,477) | 3 (4,665) | 256.7x | 1.250x |
+| skew | mutations | 6.034 / 6.454 | 4.081 / 4.258 | 770 (20,787) | 3 (756) | 256.7x | 1.479x |
+| deep | reopen-like | 10.650 / 13.263 | 9.800 / 11.401 | 770 (23,124) | 3 (114) | 256.7x | 1.087x |
+| broad | reopen-like | 5.729 / 6.216 | 4.541 / 6.188 | 770 (18,477) | 3 (4,665) | 256.7x | 1.262x |
+| skew | reopen-like | 5.829 / 6.090 | 3.995 / 4.234 | 770 (20,787) | 3 (756) | 256.7x | 1.459x |
+
+For the reopen-like cases, including close/open in each cycle, the measured
+full/dirty p50 cycle times were 16.303/15.953 ms (deep, 1.022x),
+8.128/7.063 ms (broad, 1.151x), and 8.035/6.173 ms (skew, 1.302x).  These
+small wall-time gains are much less dramatic than the row-write reduction,
+consistent with the prototype still materializing and validating the complete
+old state and paying SQLite transaction/reopen costs.
+
+A separate bounded differential stream used 64-node trees, seeds 10--19, and
+48 operations per seed per shape (create, update, rename, move, and recursive
+leaf delete).  All 1,440 operations matched the full adapter's ordered tree;
+reopening at operations 16, 32, and 48 also matched.  Dirty-row maxima were 14
+(deep), 132 (broad), and 76 (skew).  The committed regression test
+`tests/test_sqlite_incremental_workloads.py` retains the shape and
+mutation/reopen coverage; run it with:
+
+```text
+uv run pytest -q tests/test_sqlite_incremental_workloads.py
+```
+
+The focused workload tests pass and the full repository suite remains green.
+No production module or public API was changed.
+
+## Termination decision
+
+**Terminate this as an isolated experiment; do not promote it.**  The matrix
+confirms the useful claim: isolated edits usually reduce SQLite logical row
+writes by roughly two orders of magnitude or more.  It does **not** establish
+a sufficiently consistent wall-clock win: reopen-like speedups were only
+1.022--1.302x, and broad edge rewrites raised dirty p95 writes to 515 in the
+larger 256-node sequence.  The implementation also parses/materializes the
+entire old state under the write lock, so its asymptotic read/diff cost remains
+whole-tree.  Further work would require a separately justified design (change
+journal or row digests, edge-range update policy, and larger contention/crash
+matrices) rather than core promotion of this subclass.

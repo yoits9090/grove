@@ -123,3 +123,15 @@ p95. Deep workloads are capped at 800 nodes by the benchmark to avoid unbounded
 recursive/export cost. These are local observational results, not quality
 thresholds; they expose write amplification and reopen growth for the next
 SQLite incremental-write experiment.
+
+
+## Seventh-cycle evidence
+
+The isolated incremental SQLite dirty-row prototype was exercised across deep,
+broad, and skewed 256-node matrices with mutation and reopen-like boundaries.
+Median mutation speedups were 1.142x (deep), 1.250x (broad), and 1.479x (skew);
+median row-write reductions were 256.7x, with broad edge rewrites producing a
+p95 of 515 dirty rows. A separate 1,440-operation differential matrix across
+seeds and families matched the full-rewrite oracle, including reopen checkpoints.
+The experiment is terminated without core promotion: wall-clock gains are
+modest/variable, broad edge costs vary, and it still materializes the old state.
