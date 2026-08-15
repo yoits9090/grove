@@ -3,6 +3,28 @@ name: GROVE evals
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      workload:
+        description: Benchmark workload family
+        type: choice
+        required: true
+        default: random
+        options: [random, deep, broad, skew, reopen]
+      nodes:
+        description: Number of benchmark nodes (family-specific cap applies)
+        type: string
+        required: true
+        default: "200"
+      reads:
+        description: Number of benchmark reads
+        type: string
+        required: true
+        default: "100"
+      seed:
+        description: Deterministic benchmark seed
+        type: string
+        required: true
+        default: "7"
   schedule:
     - cron: "17 3 * * 0"
 
@@ -16,6 +38,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # pyproject.toml supports >=3.10; keep every currently supported
+        # CPython minor in CI, including the newest stable runner.
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
@@ -33,18 +57,59 @@ jobs:
       - name: Test
         run: |
           mkdir -p artifacts
-          uv run --locked --with pytest==8.3.5 pytest -q --junitxml=artifacts/pytest.xml
+          # pytest is installed by the locked dev group; do not resolve an
+          # untracked ephemeral dependency with --with here.
+          uv run --locked pytest -q --junitxml=artifacts/pytest.xml
+      - name: Test and package inventory
+        if: always()
+        run: |
+          mkdir -p artifacts
+          set +e
+          uv run --locked pytest --collect-only > artifacts/test-collection.txt 2>&1
+          collection_status=$?
+          set -e
+          export COLLECTION_STATUS="$collection_status"
+          python - <<'PY'
+          import json
+          import pathlib
+          import re
+          import sys
+          import tomllib
+
+          root = pathlib.Path(".")
+          collection = pathlib.Path("artifacts/test-collection.txt").read_text()
+          match = re.search(r"(\d+) tests? collected", collection)
+          test_files = sorted(str(p) for p in (root / "tests").rglob("test_*.py"))
+          package_files = sorted(str(p) for p in (root / "grove").rglob("*.py"))
+          with (root / "pyproject.toml").open("rb") as stream:
+              project = tomllib.load(stream)["project"]
+          inventory = {
+              "python": sys.version,
+              "requires_python": project["requires-python"],
+              "package": project["name"],
+              "package_python_files": package_files,
+              "package_python_file_count": len(package_files),
+              "test_files": test_files,
+              "test_file_count": len(test_files),
+              "collected_test_count": int(match.group(1)) if match else None,
+              "collection_status": int(__import__("os").environ["COLLECTION_STATUS"]),
+          }
+          (root / "artifacts/test-inventory.json").write_text(
+              json.dumps(inventory, indent=2, sort_keys=True) + "\n"
+          )
+          PY
       - name: Environment
         if: always()
         run: |
           mkdir -p artifacts
           {
-            python -VV
-            uv --version
-            uname -a
-            git rev-parse HEAD
+            echo "python: $(python -VV 2>&1)"
+            echo "uv: $(uv --version)"
+            echo "runner: $(uname -a)"
+            echo "commit: $(git rev-parse HEAD)"
+            echo "working_tree:"
             git status --porcelain
-            sha256sum uv.lock
+            echo "uv_lock_sha256: $(sha256sum uv.lock | cut -d' ' -f1)"
           } > artifacts/environment.txt
       - uses: actions/upload-artifact@v4
         if: always()
@@ -54,9 +119,14 @@ jobs:
           retention-days: 90
 
   benchmark:
-    name: benchmark / fixed smoke
+    name: benchmark / ${{ inputs.workload || 'random' }}
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    env:
+      BENCH_FAMILY: ${{ inputs.workload || 'random' }}
+      BENCH_NODES: ${{ inputs.nodes || '200' }}
+      BENCH_READS: ${{ inputs.reads || '100' }}
+      BENCH_SEED: ${{ inputs.seed || '7' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -67,30 +137,70 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           version: "0.11.17"
-      - run: uv sync --locked --dev
+          enable-cache: true
+      - name: Install
+        run: uv sync --locked --dev
       - name: Benchmark
         run: |
           mkdir -p artifacts
-          uv run --locked python benchmarks/bench.py --nodes 200 --reads 100 --seed 7 > artifacts/benchmark.json
+          uv run --locked python benchmarks/bench.py \
+            --family "$BENCH_FAMILY" \
+            --nodes "$BENCH_NODES" \
+            --reads "$BENCH_READS" \
+            --seed "$BENCH_SEED" > artifacts/benchmark.json
           python - <<'PY'
           import json
-          json.load(open("artifacts/benchmark.json"))
+          from pathlib import Path
+          result = json.loads(Path("artifacts/benchmark.json").read_text())
+          expected = {
+              "family": __import__("os").environ["BENCH_FAMILY"],
+              "nodes": int(__import__("os").environ["BENCH_NODES"]),
+              "reads": int(__import__("os").environ["BENCH_READS"]),
+              "seed": int(__import__("os").environ["BENCH_SEED"]),
+          }
+          actual = {key: result[key] for key in expected}
+          if actual != expected:
+              raise SystemExit(f"benchmark configuration mismatch: {actual!r} != {expected!r}")
           PY
       - name: Manifest
         if: always()
         run: |
+          mkdir -p artifacts
           python - <<'PY'
-          import json, platform, subprocess, sys, time
+          import hashlib
+          import json
+          import os
+          import platform
+          import subprocess
+          import sys
+          import time
+          from pathlib import Path
+
+          benchmark_path = Path("artifacts/benchmark.json")
+          benchmark = json.loads(benchmark_path.read_text()) if benchmark_path.exists() else {}
+          command = [
+              "uv", "run", "--locked", "python", "benchmarks/bench.py",
+              "--family", os.environ["BENCH_FAMILY"],
+              "--nodes", os.environ["BENCH_NODES"],
+              "--reads", os.environ["BENCH_READS"],
+              "--seed", os.environ["BENCH_SEED"],
+          ]
           out = {
-            "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
-            "run_id": "${{ github.run_id }}",
-            "python": sys.version,
-            "platform": platform.platform(),
-            "workload_family": "random-tree-smoke",
-            "command": "uv run --locked python benchmarks/bench.py --nodes 200 --reads 100 --seed 7",
-            "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+              "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "run_id": os.environ.get("GITHUB_RUN_ID"),
+              "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
+              "event": os.environ.get("GITHUB_EVENT_NAME"),
+              "python": sys.version,
+              "platform": platform.platform(),
+              "uv_lock_sha256": hashlib.sha256(Path("uv.lock").read_bytes()).hexdigest(),
+              "workload_family": benchmark.get("family", os.environ["BENCH_FAMILY"]),
+              "config": benchmark.get("config"),
+              "command": command,
+              "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
           }
-          json.dump(out, open("artifacts/manifest.json", "w"), indent=2, sort_keys=True)
+          Path("artifacts/manifest.json").write_text(
+              json.dumps(out, indent=2, sort_keys=True) + "\n"
+          )
           PY
       - uses: actions/upload-artifact@v4
         if: always()
