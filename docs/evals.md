@@ -81,9 +81,9 @@ limits.
 
 A disposable SQLite scalar-property index experiment stores typed scalar keys
 in an attached sidecar and rebuilds them atomically with tree commits. It
-preserves exact GROVE semantics by finalizing through the normal materialized
-query. In the checked-in 200-node/20-group/50-read/5-repeat run, the baseline
-materialized path measured 54.758 ms median versus 69.178 ms for the indexed
-experiment (0.792x), demonstrating that an index without an accelerated
-snapshot/query executor is not yet useful. The experiment remains isolated
-pending a workload-driven design.
+preserves exact GROVE semantics and now has an isolated direct-candidate query
+path. In a 200-node/10-group/50-read/2-repeat run, the materialized baseline
+measured 71.656 ms median versus 22.840 ms for the direct indexed path (3.137x).
+Earlier full-materialization runs were slower than baseline, so this result is
+not generalized into the public API; it supports further workload-driven
+investigation.

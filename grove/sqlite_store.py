@@ -293,13 +293,18 @@ class SQLiteTreeStore(TreeStore):
     def _read_snapshot(self) -> tuple[dict[str, Any], int]:
         """Read a coherent state/revision pair in one SQLite read transaction."""
         self._ensure_open()
-        self._conn.execute("BEGIN")
         try:
+            self._conn.execute("BEGIN")
             result = self._read_state_from_connection()
             self._conn.commit()
             return result
+        except sqlite3.DatabaseError as exc:
+            try: self._conn.rollback()
+            except sqlite3.DatabaseError: pass
+            raise StorageCorruptionError(f"invalid SQLite database during read: {exc}") from exc
         except Exception:
-            self._conn.rollback()
+            try: self._conn.rollback()
+            except sqlite3.DatabaseError: pass
             raise
 
     def _refresh(self) -> None:

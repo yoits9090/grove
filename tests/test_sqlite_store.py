@@ -226,3 +226,13 @@ def test_sqlite_relational_duplicates_fail_closed(tmp_path, kwargs):
     _write_relaxed_sqlite_schema(path, **kwargs)
     with pytest.raises(StorageCorruptionError):
         SQLiteTreeStore(path)
+
+
+def test_sqlite_out_of_band_schema_drop_fails_closed_on_existing_handle(tmp_path):
+    path=tmp_path/"dropped.db"
+    db=SQLiteTreeStore(path); node=db.create("node")
+    with sqlite3.connect(path) as raw:
+        raw.execute("DROP TABLE children")
+        raw.commit()
+    with pytest.raises(StorageCorruptionError): db.get(node.id)
+    db.close()
