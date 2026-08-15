@@ -8,9 +8,11 @@ rolls back both the tree and the sidecar index.
 
 The adapter is an experiment, not an optimized replacement for ``PropertyIndex``.
 Lookup reads one coherent source/sidecar snapshot, narrows candidates through a
-SQLite B-tree, and then uses the normal materialized ``Query`` implementation
-(and an exact typed predicate) for final semantics.  This makes the benchmark
-an honest comparison with today's JSON/materialized query path.
+SQLite B-tree, and uses an ordered SQL CTE to decode only matching node rows.
+The private direct query facade preserves detached Node views, typed equality,
+and primary-tree order without full-tree materialization.  It is intentionally
+kept out of the public API until broader predicate semantics and workloads
+justify the added storage/query complexity.
 """
 from __future__ import annotations
 

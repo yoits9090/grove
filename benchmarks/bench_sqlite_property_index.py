@@ -1,9 +1,9 @@
-"""Compare current materialized queries with durable SQLite scalar lookup.
+"""Compare materialized queries with direct durable SQLite scalar lookup.
 
 This is an observational experiment.  It is intentionally outside GROVE's
-public package API and reports both correctness and wall-clock medians.  The
-indexed path still materializes a coherent tree snapshot for final Query
-semantics; the sidecar B-tree only narrows candidate IDs.
+public package API and reports correctness, candidate counts, and wall-clock
+medians.  The indexed path uses a sidecar B-tree plus an ordered SQL CTE and
+decodes matching rows only; it is not a general replacement for Query.
 """
 from __future__ import annotations
 
@@ -71,8 +71,8 @@ def main(argv: list[str] | None = None) -> None:
                 "repeats": args.repeats,
                 "candidate_count": len(indexed_ids),
                 "baseline_materialized_query_median_ms": _median(baseline_samples),
-                "durable_scalar_index_median_ms": _median(indexed_samples),
-                "speedup_baseline_over_index": round(
+                "durable_scalar_index_direct_median_ms": _median(indexed_samples),
+                "speedup_baseline_over_direct_index": round(
                     statistics.median(baseline_samples) / statistics.median(indexed_samples), 3
                 ),
                 "baseline_samples_ms": [round(value, 3) for value in baseline_samples],
