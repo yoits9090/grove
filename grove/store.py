@@ -253,7 +253,12 @@ def _check_invariants(state: dict[str, Any]) -> None:
         _validate_id(node_id)
         _validate_timestamp(record["created_at"])
         _validate_timestamp(record["modified_at"])
-        if record["modified_at"] < record["created_at"]:
+        # ISO-8601 strings with different offsets do not sort by instant.
+        # Compare parsed timezone-aware values so an offset cannot make a
+        # modification that predates creation appear newer lexicographically.
+        created_at = _dt.datetime.fromisoformat(record["created_at"])
+        modified_at = _dt.datetime.fromisoformat(record["modified_at"])
+        if modified_at < created_at:
             raise InvalidOperationError("modified_at cannot precede created_at")
         if record["parent_id"] is not None and record["parent_id"] not in nodes:
             raise InvalidOperationError("missing parent")
@@ -422,6 +427,12 @@ class TreeStore:
         """Create or return a lazy secondary index for ``property_name``."""
         from .query import PropertyIndex
         with self._lock:
+            # SQLite handles have a real resource lifecycle.  Keep index
+            # creation consistent with all other public operations instead of
+            # handing out an index that can never be used after close().
+            ensure_open = getattr(self, "_ensure_open", None)
+            if ensure_open is not None:
+                ensure_open()
             index = self._indexes.get(property_name)
             if index is None:
                 index = PropertyIndex(self, property_name)
@@ -436,6 +447,9 @@ class TreeStore:
 
     def drop_index(self, property_name: str) -> None:
         with self._lock:
+            ensure_open = getattr(self, "_ensure_open", None)
+            if ensure_open is not None:
+                ensure_open()
             self._indexes.pop(property_name, None)
 
     def transaction(self) -> "Transaction":

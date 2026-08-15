@@ -257,3 +257,16 @@ def _ids_in_store(db):
         for child in db.get(nid).children: visit(child)
     visit(db.root.id)
     return out
+
+
+def test_timestamp_order_compares_instants_across_timezones():
+    db = TreeStore()
+    node = db.create("node")
+    tx = db.transaction()
+    # Lexically this modified timestamp is later (00:30 > 00:00), but its
+    # UTC instant is five hours earlier than creation.
+    tx._state["nodes"][node.id]["created_at"] = "2020-01-01T00:00:00+00:00"
+    tx._state["nodes"][node.id]["modified_at"] = "2020-01-01T00:30:00+05:00"
+    with pytest.raises(InvalidOperationError, match="modified_at cannot precede"):
+        tx.commit()
+
