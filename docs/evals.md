@@ -109,3 +109,17 @@ and ordering semantics, typed equality, contention, write amplification, and
 p50/p95 latency across the documented workload families. The priority is
 SQLite readiness evidence, not another optimization in isolation; see
 `docs/roadmap.md`.
+
+
+## Sixth-cycle workload evidence
+
+The expanded benchmark families were exercised locally at 1,000 nodes where
+bounded caps permit. Broad trees (1,000 nodes) measured 715.454 ms build,
+332,573-byte durable state, and 11.093 ms durable import commit. Skewed trees
+measured 740.319 ms build, 332,280 bytes, and 15.666 ms durable import commit.
+A 100-node reopen-after-every-commit run produced 1,703,693 bytes of snapshot
+history, 0.357 ms commit p50 / 0.666 ms p95, and 4.049 ms reopen p50 / 13.801 ms
+p95. Deep workloads are capped at 800 nodes by the benchmark to avoid unbounded
+recursive/export cost. These are local observational results, not quality
+thresholds; they expose write amplification and reopen growth for the next
+SQLite incremental-write experiment.
