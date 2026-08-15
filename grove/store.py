@@ -522,10 +522,13 @@ class Transaction:
 
     def _ensure_open(self):
         if self._done: raise InvalidOperationError("transaction is closed")
-    def _resolve(self, target): return self._store._resolve(self._state, target)
-    def get(self, target): self._ensure_open(); return _record_to_node(self._state["nodes"][self._resolve(target)])
+    def _resolve(self, target):
+        self._ensure_open()
+        return self._store._resolve(self._state, target)
+    def get(self, target): return _record_to_node(self._state["nodes"][self._resolve(target)])
     read = get
     def path(self, target):
+        self._ensure_open()
         nid=self._resolve(target); names=[]
         while nid != self._state["root_id"]:
             n=self._state["nodes"][nid]; names.append(n["name"]); nid=n["parent_id"]
