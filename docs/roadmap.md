@@ -58,10 +58,10 @@ remote replication, and a broad query language are not current goals.
    validation, corruption rejection, and GC accounting. Incremental Merkle
    hashing demonstrates digest reuse after local edits. Neither is a storage
    replacement or a wall-clock performance claim.
-10. **Complete proof of concept:** SQLite online-backup history artifacts can be
-    captured and reopened as detached stores. The prototype has no retention,
-    encryption, remote replication, or public history handle; the core package
-    intentionally exposes no durable history API.
+10. **Complete small public API:** SQLite online-backup history artifacts can be
+    captured and reopened as detached stores through `SQLiteHistory` and
+    `Snapshot`. The API has no retention, encryption, remote replication,
+    rollback, or cross-database atomicity; artifacts remain full copies.
 
 ## Next priorities (in order)
 
@@ -79,11 +79,11 @@ remote replication, and a broad query language are not current goals.
    sidecar experiment to the required predicate/scope semantics first. Promote
    neither without crash, mutation, ordering, typed-equality, and workload
    evidence.
-3. **Define history requirements before designing a public API:** measure
-   retention, diff/rollback, and snapshot-open use cases. If demand is real,
-   harden the backup artifact with retention and explicit immutable handles;
-   otherwise keep it private. Do not introduce version tables or structural
-   sharing into `TreeStore` merely to satisfy an unmeasured possibility.
+3. **Define history requirements before expanding the public API:** measure
+   retention, diff/rollback, and snapshot-open use cases. The current API keeps
+   only explicit immutable handles over full backup artifacts; do not introduce
+   version tables or structural sharing into `TreeStore` merely to satisfy an
+   unmeasured possibility.
 4. **Keep the public contract narrow and documented:** preserve detached
    snapshots, typed values, schema atomicity, bounded lifecycle behavior, and
    compatibility tests while any backend experiment evolves. Multi-process

@@ -50,9 +50,10 @@ cycle checks.
   the direct SQL scalar path is isolated in `grove/`'s experiment module and
   is not public API.
 - Schema validation is optional, in-memory configuration. There is no durable
-  schema catalog, migration protocol, or history/rollback API. The
-  content-addressed, Merkle, scalar-index, and logical-history artifacts are
-  isolated experiments.
+  schema catalog or migration protocol. `SQLiteHistory` exposes full-copy
+  logical history handles only; it provides no retention, rollback, encryption,
+  replication, or cross-database atomicity. Content-addressed, Merkle, and
+  scalar-index artifacts remain isolated experiments.
 - Every durable SQLite commit rewrites the complete logical state, and the
   snapshot log has the same whole-state commit cost; there is no streaming
   import/export or incremental core write path.
