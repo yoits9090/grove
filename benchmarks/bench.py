@@ -26,6 +26,7 @@ import argparse
 import json
 import platform
 import random
+import statistics
 import sys
 import tempfile
 import time
@@ -259,19 +260,23 @@ def _measure(
         "build_ms": round(build_ms, 3),
         "export_ms": round(export_ms, 3),
         "export_bytes": len(exported.encode()),
-        "read_p50_us": _percentile(read_times, 0.50),
+        "read_p50_us": round(statistics.median(read_times), 3) if read_times else None,
         "read_p95_us": _percentile(read_times, 0.95),
         "durable_import_commit_ms": round(durable_ms, 3),
         "durable_bytes": durable_bytes,
         "history_bytes": reopen_meta["history_bytes"],
         "reopen_count": reopen_meta["reopen_count"],
-        "reopen_commit_p50_ms": _percentile(
-            reopen_meta["reopen_commit_times_ms"], 0.50
+        "reopen_commit_p50_ms": (
+            round(statistics.median(reopen_meta["reopen_commit_times_ms"]), 3)
+            if reopen_meta["reopen_commit_times_ms"] else None
         ),
         "reopen_commit_p95_ms": _percentile(
             reopen_meta["reopen_commit_times_ms"], 0.95
         ),
-        "reopen_p50_ms": _percentile(reopen_meta["reopen_times_ms"], 0.50),
+        "reopen_p50_ms": (
+            round(statistics.median(reopen_meta["reopen_times_ms"]), 3)
+            if reopen_meta["reopen_times_ms"] else None
+        ),
         "reopen_p95_ms": _percentile(reopen_meta["reopen_times_ms"], 0.95),
         # The config/shape fields make it possible to compare artifacts
         # without reverse-engineering command-line defaults.
