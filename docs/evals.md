@@ -93,8 +93,19 @@ mutation, crash, and workload validation remains required.
 
 The suite now includes optional schema validation, immutable content-addressed
 snapshot tests, incremental Merkle tests, bounded SQLite writer lifecycle
-coverage, online backup tests, and malformed external-schema tests. The full
-suite passes under `uv run python -m pytest -q`.
+coverage, online backup tests, and malformed external-schema tests. At the
+current checkout it collects **109 tests** and passes under:
 
-The structural-sharing and Merkle work is intentionally isolated under
-`experiments/`; neither experiment is a production performance claim.
+```bash
+uv run pytest -q
+```
+
+The structural-sharing, Merkle, durable scalar-index, and logical-history work
+is intentionally isolated under `experiments/`; none is a production
+performance claim or public API. The scalar direct path's 4.327x result and
+read-cache 757.3x result are machine-specific controls, not targets. Before
+promoting any path, collect reproducible evidence for crash recovery, mutation
+and ordering semantics, typed equality, contention, write amplification, and
+p50/p95 latency across the documented workload families. The priority is
+SQLite readiness evidence, not another optimization in isolation; see
+`docs/roadmap.md`.

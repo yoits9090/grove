@@ -44,7 +44,7 @@ JSON decoding and invariant validation, not a semantic shortcut. The focused
 test `test_sqlite_reads_skip_snapshot_materialization_when_revision_is_unchanged`
 asserts no materialization for stable repeated reads, while
 `test_sqlite_fast_read_path_still_refreshes_other_instance` covers visibility
-of another handle's commit. Current suite result: `84 passed` (`uv run pytest -q`).
+of another handle's commit. Current checkout result: `109 passed` (`uv run pytest -q`); the numeric result above is the historical run for this experiment and is not the current suite size.
 
 **Reversibility and limits.** The change is isolated to the SQLite adapter and
 can be reverted as one `_refresh`/validator patch. Every operation still checks

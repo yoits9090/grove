@@ -41,13 +41,24 @@ cycle checks.
 
 ## Known limitations
 
-- Single-process thread safety only; transactions conflict optimistically and
-  readers receive detached snapshots.
-- Query and in-memory property-index APIs are reference implementations; the
-  SQLite adapter still materializes complete snapshots for query execution.
-- No schema validation or durable history/snapshot API. The logical-history and
-  durable scalar-index prototypes are isolated, disposable experiments.
-- Every durable commit rewrites the complete state; no streaming import/export.
+- The in-memory API is thread-safe within one store instance; transactions
+  conflict optimistically and readers receive detached snapshots. SQLite can
+  share a file across processes within SQLite's single-writer model, but this
+  is not distributed locking or a networked multi-writer service.
+- Query and in-memory property-index APIs are reference implementations. The
+  SQLite adapter's public query path still materializes complete snapshots;
+  the direct SQL scalar path is isolated in `grove/`'s experiment module and
+  is not public API.
+- Schema validation is optional, in-memory configuration. There is no durable
+  schema catalog, migration protocol, or history/rollback API. The
+  content-addressed, Merkle, scalar-index, and logical-history artifacts are
+  isolated experiments.
+- Every durable SQLite commit rewrites the complete logical state, and the
+  snapshot log has the same whole-state commit cost; there is no streaming
+  import/export or incremental core write path.
+- SQLite lifecycle controls are bounded but not a guarantee that a contending
+  writer will eventually commit. Online backup copies one revision; it is not
+  retention, replication, encryption, or rollback.
 - Unicode names are preserved but not case/normalization-folded.
 - Subscriptions are best-effort synchronous callbacks and currently report only
   changed roots, not a compact subtree summary.
@@ -55,11 +66,12 @@ cycle checks.
 
 ## D-004: scope and event semantics (2025-02-14)
 
-The snapshot backend is single-owner (one process/instance per log path) in
-this milestone. Its lock is thread-local; opening the same log from multiple
-writers is not a supported concurrency mode and is a planned SQLite adapter
-requirement. Recovery truncates only an incomplete or garbage suffix after a
-valid frame; a non-empty file with no valid frame fails closed.
+The snapshot backend remains single-owner (one process/instance per log
+path). Its lock is thread-local; opening the same log from multiple writers is
+not supported. SQLite is the separate multi-process adapter within SQLite's
+single-writer model, with bounded lock waits and optimistic durable revisions.
+Recovery truncates only an incomplete or garbage suffix after a valid frame; a
+non-empty file with no valid frame fails closed.
 
 Subscriptions are synchronous, best-effort callbacks after a successful commit.
 A transaction produces a small event batch (changed roots/parents, not every
@@ -85,9 +97,12 @@ existing detached transaction model, then rebuilds relational rows in one
 `BEGIN IMMEDIATE` transaction. Durable revision comparison prevents stale
 cross-instance commits; SQLite serializes writers and allows WAL readers.
 
-This is a correctness-first adapter, not yet a production query engine: commits
-rewrite relational rows for the complete state, reads materialize the tree, and
-busy/lock errors are surfaced as operation errors rather than hidden retries.
+This is a correctness-first adapter, not yet a production query engine:
+commits rewrite relational rows for the complete state, and reads materialize
+the tree whenever the revision cache is invalidated. Public queries still use
+that materialized snapshot. Writer lock waits use a finite timeout/retry policy
+and are surfaced as `InvalidOperationError` on exhaustion rather than hidden in
+an unbounded loop; the policy is local coordination, not distributed locking.
 The snapshot backend remains the reference oracle. See SQLite's authoritative
 WAL, transaction, foreign-key, and synchronous documentation:
 https://sqlite.org/wal.html, https://sqlite.org/lang_transaction.html,
