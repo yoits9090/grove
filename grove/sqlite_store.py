@@ -462,10 +462,34 @@ class SQLiteTreeStore(TreeStore):
             if isinstance(destination, sqlite3.Connection):
                 if destination is self._conn:
                     raise InvalidOperationError("backup destination cannot be the source connection")
-                if destination.in_transaction:
+                try:
+                    if destination.in_transaction:
+                        raise InvalidOperationError(
+                            "backup destination connection has an active transaction"
+                        )
+                    destination_rows = destination.execute(
+                        "PRAGMA database_list"
+                    ).fetchall()
+                except InvalidOperationError:
+                    raise
+                except sqlite3.Error as exc:
                     raise InvalidOperationError(
-                        "backup destination connection has an active transaction"
+                        "backup destination connection is unavailable"
+                    ) from exc
+                if self.path_on_disk is not None:
+                    destination_main = next(
+                        (row[2] for row in destination_rows if row[1] == "main"),
+                        "",
                     )
+                    if destination_main:
+                        try:
+                            same_path = Path(destination_main).resolve() == self.path_on_disk.resolve()
+                        except OSError:
+                            same_path = os.path.abspath(destination_main) == os.path.abspath(self.path_on_disk)
+                        if same_path:
+                            raise InvalidOperationError(
+                                "backup destination cannot alias the source database"
+                            )
                 destination_conn = destination
             else:
                 try:

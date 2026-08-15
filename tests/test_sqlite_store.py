@@ -299,3 +299,14 @@ def test_sqlite_writer_lock_failure_is_bounded(tmp_path):
             db.close()
         holder.rollback()
         holder.close()
+
+
+def test_sqlite_backup_rejects_connection_alias(tmp_path):
+    path=tmp_path/"alias.db"
+    db=SQLiteTreeStore(path); db.create("node")
+    alias=sqlite3.connect(path)
+    try:
+        with pytest.raises(InvalidOperationError, match="alias"):
+            db.backup(alias)
+    finally:
+        alias.close(); db.close()
