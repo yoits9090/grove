@@ -407,6 +407,8 @@ class SQLiteTreeStore(TreeStore):
                     or current_revision < 0
                 ):
                     raise StorageCorruptionError("invalid SQLite metadata revision")
+                if current_root != tx._state["root_id"]:
+                    raise StorageCorruptionError("SQLite metadata root does not match transaction")
                 if current_revision != tx._base_version:
                     self._conn.rollback()
                     # Keep this instance useful after a conflict.  The failed
