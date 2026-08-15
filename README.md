@@ -16,6 +16,9 @@ scale and feature breadth.
   and references.
 - A checksummed append-only whole-snapshot log with fsync and safe truncated-tail
   recovery (`PersistentTreeStore`).
+- An experimental SQLite WAL backend with relational `nodes`/`children` edges,
+  durable revisions, and cross-instance optimistic conflict detection
+  (`SQLiteTreeStore`).
 - Basic synchronous change subscriptions and a `grove` tree/get/export CLI.
 
 The snapshot log is intentionally a conservative reference implementation. It

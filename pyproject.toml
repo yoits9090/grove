@@ -17,6 +17,9 @@ grove = "grove.cli:main"
 [tool.setuptools.packages.find]
 include = ["grove*"]
 
+[dependency-groups]
+dev = ["pytest==8.3.5"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

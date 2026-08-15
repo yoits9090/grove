@@ -27,7 +27,7 @@ reopen-after-each-commit durability. Baselines use deterministic seeds.
 
 ## First-cycle evidence
 
-`tests/test_store.py` contains 20 deterministic tests plus randomized operation
+`tests/` contains 25 deterministic tests plus randomized operation
 coverage, including typed round trips, model-like path checks, invalid operation
 atomicity, subscription ancestry, and initial-file corruption. Run:
 

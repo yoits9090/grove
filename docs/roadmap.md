@@ -10,9 +10,11 @@
 
 ## Next: conservative scale experiment
 
-4. SQLite adapter using WAL, FK enforcement, unique sibling names, and explicit
-   commit revisions; compare correctness and write/read throughput against the
-   snapshot log.
+4. **Started:** SQLite adapter using WAL, FK enforcement, relational ordered
+   child edges, and durable commit revisions. Expand differential and crash
+   tests before treating it as production-ready. Current adapter is complete
+   enough for correctness comparison but still rewrites the logical tree per
+   commit.
 5. Query API and secondary indexes, designed against a reference evaluator.
 6. Better event batches/subtree change summaries and subscription backpressure.
 

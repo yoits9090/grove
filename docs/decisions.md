@@ -69,3 +69,24 @@ A complete root export can replace an empty destination database atomically;
 non-empty roots reject replacement. With
 `preserve_ids=False`, references to IDs inside the imported subtree are remapped,
 while external references remain opaque and may dangle.
+
+
+## D-005: SQLite WAL experiment (2025-02-14)
+
+The SQLite adapter is experimental and intentionally uses three relational
+structures: `metadata` (singleton revision/root), `nodes` (identity, parent,
+properties, timestamps), and ordered `children` edges (parent, child, position).
+The adapter enables WAL, foreign keys, and `synchronous=FULL` for file-backed
+stores. It loads and validates the complete graph, stages mutations with the
+existing detached transaction model, then rebuilds relational rows in one
+`BEGIN IMMEDIATE` transaction. Durable revision comparison prevents stale
+cross-instance commits; SQLite serializes writers and allows WAL readers.
+
+This is a correctness-first adapter, not yet a production query engine: commits
+rewrite relational rows for the complete state, reads materialize the tree, and
+busy/lock errors are surfaced as operation errors rather than hidden retries.
+The snapshot backend remains the reference oracle. See SQLite's authoritative
+WAL, transaction, foreign-key, and synchronous documentation:
+https://sqlite.org/wal.html, https://sqlite.org/lang_transaction.html,
+https://sqlite.org/foreignkeys.html, and
+https://sqlite.org/pragma.html#pragma_synchronous.

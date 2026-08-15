@@ -1,0 +1,100 @@
+name: GROVE evals
+
+on:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 0"
+
+permissions:
+  contents: read
+
+jobs:
+  correctness:
+    name: correctness / py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.17"
+          enable-cache: true
+      - name: Install
+        run: uv sync --locked --dev
+      - name: Test
+        run: |
+          mkdir -p artifacts
+          uv run --locked --with pytest==8.3.5 pytest -q --junitxml=artifacts/pytest.xml
+      - name: Environment
+        if: always()
+        run: |
+          mkdir -p artifacts
+          {
+            python -VV
+            uv --version
+            uname -a
+            git rev-parse HEAD
+            git status --porcelain
+            sha256sum uv.lock
+          } > artifacts/environment.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: grove-correctness-${{ github.sha }}-py${{ matrix.python-version }}-${{ github.run_id }}
+          path: artifacts/
+          retention-days: 90
+
+  benchmark:
+    name: benchmark / fixed smoke
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.17"
+      - run: uv sync --locked --dev
+      - name: Benchmark
+        run: |
+          mkdir -p artifacts
+          uv run --locked python benchmarks/bench.py --nodes 200 --reads 100 --seed 7 > artifacts/benchmark.json
+          python - <<'PY'
+          import json
+          json.load(open("artifacts/benchmark.json"))
+          PY
+      - name: Manifest
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, platform, subprocess, sys, time
+          out = {
+            "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+            "run_id": "${{ github.run_id }}",
+            "python": sys.version,
+            "platform": platform.platform(),
+            "workload_family": "random-tree-smoke",
+            "command": "uv run --locked python benchmarks/bench.py --nodes 200 --reads 100 --seed 7",
+            "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+          }
+          json.dump(out, open("artifacts/manifest.json", "w"), indent=2, sort_keys=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: grove-benchmark-${{ github.sha }}-${{ github.run_id }}
+          path: artifacts/
+          retention-days: 90
