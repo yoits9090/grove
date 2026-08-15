@@ -188,15 +188,18 @@ class Query(Iterable[Node]):
         else:
             initial = list(nodes[self._root_id]["children"])
 
-        def walk(node_id: str) -> Iterator[str]:
+        def walk(node_id: str, depth: int) -> Iterator[str]:
             if self._candidate_ids is None or node_id in self._candidate_ids:
                 yield node_id
-            if self._recursive:
+            # With include_root=True and recursive=False, include the target
+            # and its direct children. Without the target, recursive=False
+            # means exactly the target's direct children.
+            if self._recursive or (self._include_root and depth == 0):
                 for child_id in nodes[node_id]["children"]:
-                    yield from walk(child_id)
+                    yield from walk(child_id, depth + 1)
 
         for node_id in initial:
-            yield from walk(node_id)
+            yield from walk(node_id, 0)
 
     def __iter__(self) -> Iterator[Node]:
         for node_id in self._iter_ids():

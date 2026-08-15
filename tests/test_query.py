@@ -19,6 +19,7 @@ def test_query_snapshot_traversal_filters_and_typed_index():
 def test_query_recursive_scope_and_detached_values():
     db=TreeStore(); a=db.create("a"); b=db.create("b",parent=a.id,properties={"v":[1]}); c=db.create("c",parent=b.id)
     assert [n.name for n in db.query(a.id,recursive=False)]==["b"]
+    assert [n.name for n in db.query(a.id,recursive=False,include_root=True)]==["a","b"]
     assert [n.name for n in db.query(a.id,include_root=True)]==["a","b","c"]
     n=db.query(a.id).where(lambda node: node.name=="b").first(); n.properties["v"].append(2)
     assert db.get(b.id).properties["v"]==[1]
