@@ -380,17 +380,22 @@ class SQLiteTreeStore(TreeStore):
         # and corruption checks.
         with self._lock:
             self._ensure_open()
-            data_version = self._conn.execute(
-                "PRAGMA data_version"
-            ).fetchone()[0]
-            metadata = self._conn.execute(
-                "SELECT revision, root_id FROM metadata WHERE id = 1"
-            ).fetchone()
-            # Close the small validation window: a different connection may
-            # commit between the first data_version read and metadata query.
-            data_version_after = self._conn.execute(
-                "PRAGMA data_version"
-            ).fetchone()[0]
+            try:
+                data_version = self._conn.execute(
+                    "PRAGMA data_version"
+                ).fetchone()[0]
+                metadata = self._conn.execute(
+                    "SELECT revision, root_id FROM metadata WHERE id = 1"
+                ).fetchone()
+                # Close the small validation window: a different connection may
+                # commit between the first data_version read and metadata query.
+                data_version_after = self._conn.execute(
+                    "PRAGMA data_version"
+                ).fetchone()[0]
+            except sqlite3.DatabaseError as exc:
+                raise StorageCorruptionError(
+                    f"invalid SQLite database during refresh: {exc}"
+                ) from exc
             if (
                 data_version == self._data_version
                 and data_version_after == data_version

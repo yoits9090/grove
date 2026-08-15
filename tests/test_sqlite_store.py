@@ -310,3 +310,17 @@ def test_sqlite_backup_rejects_connection_alias(tmp_path):
             db.backup(alias)
     finally:
         alias.close(); db.close()
+
+
+def test_sqlite_out_of_band_metadata_drop_fails_closed_on_existing_handle(tmp_path):
+    path = tmp_path / "dropped-metadata.db"
+    db = SQLiteTreeStore(path)
+    db.create("node")
+    try:
+        with sqlite3.connect(path) as raw:
+            raw.execute("DROP TABLE metadata")
+            raw.commit()
+        with pytest.raises(StorageCorruptionError, match="refresh"):
+            db.get("/")
+    finally:
+        db.close()
