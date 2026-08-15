@@ -74,22 +74,18 @@ jobs:
           import pathlib
           import re
           import sys
-          try:
-              import tomllib
-          except ModuleNotFoundError:  # Python 3.10
-              import tomli as tomllib
-
           root = pathlib.Path(".")
           collection = pathlib.Path("artifacts/test-collection.txt").read_text()
           match = re.search(r"(\d+) tests? collected", collection)
           test_files = sorted(str(p) for p in (root / "tests").rglob("test_*.py"))
           package_files = sorted(str(p) for p in (root / "grove").rglob("*.py"))
-          with (root / "pyproject.toml").open("rb") as stream:
-              project = tomllib.load(stream)["project"]
+          project_text = (root / "pyproject.toml").read_text()
+          name_match = re.search(r'^name\s*=\s*["\']([^"\']+)', project_text, re.MULTILINE)
+          requires_match = re.search(r'^requires-python\s*=\s*["\']([^"\']+)', project_text, re.MULTILINE)
           inventory = {
               "python": sys.version,
-              "requires_python": project["requires-python"],
-              "package": project["name"],
+              "requires_python": requires_match.group(1) if requires_match else None,
+              "package": name_match.group(1) if name_match else None,
               "package_python_files": package_files,
               "package_python_file_count": len(package_files),
               "test_files": test_files,
