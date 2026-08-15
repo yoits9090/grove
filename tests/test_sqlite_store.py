@@ -260,6 +260,17 @@ def test_sqlite_backup_rejects_closed_or_aliased_resources(tmp_path):
     db.create("node")
     with pytest.raises(InvalidOperationError, match="source"):
         db.backup(path)
+    active = sqlite3.connect(":memory:")
+    active.execute("BEGIN")
+    try:
+        db = SQLiteTreeStore(path)
+        with pytest.raises(InvalidOperationError, match="active transaction"):
+            db.backup(active)
+        db.close()
+    finally:
+        active.rollback()
+        active.close()
+    db = SQLiteTreeStore(path)
     db.close()
     with pytest.raises(InvalidOperationError, match="store is closed"):
         db.backup(destination)
