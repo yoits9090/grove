@@ -94,3 +94,45 @@ def test_non_scalar_values_are_left_to_materialized_queries(tmp_path: Path):
             db.scalar_ids("value", [1, 2])
     finally:
         db.close()
+
+
+def test_direct_scalar_query_avoids_full_state_and_preserves_tree_order(tmp_path: Path, monkeypatch):
+    db = SQLiteScalarPropertyIndexExperiment(tmp_path / "direct.db")
+    try:
+        root = db.create("root")
+        first = db.create("first", parent=root.id, properties={"score": 7})
+        nested = db.create("nested", parent=first.id, properties={"score": 7})
+        second = db.create("second", parent=root.id, properties={"score": 7})
+        db.create("miss", parent=root.id, properties={"score": 8})
+        db.create_scalar_index("score")
+        def refuse_materialization(*args, **kwargs):
+            raise AssertionError("direct lookup materialized the complete tree")
+        monkeypatch.setattr(db, "_read_state_from_connection", refuse_materialization)
+        query = db.lookup_scalar("score", 7, root.id)
+        assert query.ids() == (first.id, nested.id, second.id)
+        assert not hasattr(query, "_state")
+        assert query.first().properties == {"score": 7}
+    finally:
+        db.close()
+
+
+def test_direct_scalar_query_scope_and_predicate_match_query(tmp_path: Path):
+    db = SQLiteScalarPropertyIndexExperiment(tmp_path / "scope.db")
+    try:
+        root = db.create("root")
+        parent = db.create("parent", parent=root.id, properties={"score": 1, "kind": "yes"})
+        child = db.create("child", parent=parent.id, properties={"score": 1, "kind": "no"})
+        db.create_scalar_index("score")
+        for options in ({}, {"recursive": False}, {"include_root": True},
+                        {"recursive": False, "include_root": True}):
+            expected = db.query(root.id, **options).where(score=1).ids()
+            actual = db.lookup_scalar("score", 1, root.id, **options).where(kind="yes").ids()
+            expected_extra = db.query(root.id, **options).where(score=1).where(kind="yes").ids()
+            assert actual == expected_extra
+            if options.get("recursive", True):
+                assert expected == (parent.id, child.id)
+            else:
+                assert expected == (parent.id,)
+        assert db.lookup_scalar("score", 1, root.id, recursive=False).ids() == (parent.id,)
+    finally:
+        db.close()
