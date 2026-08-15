@@ -29,3 +29,12 @@ def test_query_on_sqlite_refreshes_and_index_survives_reopen(tmp_path):
         a=db.create("a",properties={"tag":"x"}); assert db.query().where(tag="x").first().id==a.id
     with SQLiteTreeStore(p) as db:
         assert db.create_index("tag").ids("x")== (a.id,)
+
+
+def test_transaction_query_reads_staged_state_only():
+    db=TreeStore(); db.create("existing")
+    with db.transaction() as tx:
+        staged=tx.create("staged", properties={"ready": True})
+        assert [node.name for node in tx.query(predicate={"ready": True})] == ["staged"]
+        assert [node.name for node in tx.find(type="object")] == ["existing", "staged"]
+    assert db.exists("/staged")

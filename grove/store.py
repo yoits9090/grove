@@ -517,6 +517,26 @@ class Transaction:
             n=self._state["nodes"][nid]; names.append(n["name"]); nid=n["parent_id"]
         return "/" + "/".join(reversed(names))
 
+    def _query_state_snapshot(self):
+        """Return the transaction's detached staged state for queries."""
+        self._ensure_open()
+        return _state_copy(self._state)
+
+    def query(self, target: str | Node = "/", *, recursive: bool = True,
+              include_root: bool = False, predicate=None, **criteria):
+        """Query staged transaction state without observing later commits."""
+        self._ensure_open()
+        from .query import Query
+        state = _state_copy(self._state)
+        node_id = self._resolve(target)
+        query = Query._from_snapshot(
+            state, node_id, recursive=recursive, include_root=include_root,
+            predicate=predicate,
+        )
+        return query.where(criteria) if criteria else query
+
+    find = query
+
     def _touch(self, nid: str, kind: str):
         self._state["nodes"][nid]["modified_at"] = _now()
         self._changes.append(Change(kind, nid, self.path(nid)))
