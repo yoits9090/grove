@@ -240,6 +240,8 @@ class SQLiteTreeStore(TreeStore):
                 if not isinstance(properties, str):
                     raise InvalidOperationError("invalid node properties encoding")
                 decoded = _decode_value(json.loads(properties))
+                if not isinstance(decoded, dict):
+                    raise InvalidPropertyError("node properties must be a mapping")
                 props = _clone_properties(decoded)
                 if parent_id is not None:
                     _validate_id(parent_id)

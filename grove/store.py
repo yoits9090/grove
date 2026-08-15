@@ -218,7 +218,10 @@ def _snapshot_from_json(payload: bytes) -> dict[str, Any]:
             typ = item.get("type")
             if not isinstance(typ, str) or not typ:
                 raise ValueError("invalid node type")
-            props = _clone_properties(_decode_value(item.get("properties", {})))
+            decoded_properties = _decode_value(item.get("properties", {}))
+            if not isinstance(decoded_properties, Mapping):
+                raise InvalidPropertyError("properties must be a mapping")
+            props = _clone_properties(decoded_properties)
             parent = item.get("parent_id")
             if parent is not None:
                 _validate_id(parent)
@@ -688,7 +691,10 @@ class Transaction:
             if expected_parent is not None and claimed_parent is not None and claimed_parent != expected_parent:
                 raise InvalidOperationError("child parent_id does not match its parent")
             if not isinstance(raw["type"],str) or not raw["type"]: raise InvalidOperationError("invalid type")
-            props=_clone_properties(_decode_value(raw["properties"]))
+            decoded_properties = _decode_value(raw["properties"])
+            if not isinstance(decoded_properties, Mapping):
+                raise InvalidPropertyError("properties must be a mapping")
+            props=_clone_properties(decoded_properties)
             if "created_at" in raw: _validate_timestamp(raw["created_at"])
             if "modified_at" in raw: _validate_timestamp(raw["modified_at"])
             children=raw["children"]

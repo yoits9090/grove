@@ -40,6 +40,18 @@ def test_sqlite_move_delete_copy_and_reopen(tmp_path):
     with SQLiteTreeStore(path) as db:
         assert db.exists("/b/x") and db.exists("/b2/x") and not db.exists("/a")
 
+def test_sqlite_non_mapping_properties_fail_closed(tmp_path):
+    path = tmp_path / "bad-properties.db"
+    with SQLiteTreeStore(path) as db:
+        db.create("payload", properties={"ok": True})
+    conn = sqlite3.connect(path)
+    conn.execute("UPDATE nodes SET properties = 'null' WHERE name = 'payload'")
+    conn.commit()
+    conn.close()
+    with pytest.raises(StorageCorruptionError):
+        SQLiteTreeStore(path)
+
+
 def test_sqlite_malformed_rows_fail_closed(tmp_path):
     path=tmp_path/"bad.db"
     with SQLiteTreeStore(path) as db: db.create("ok")
