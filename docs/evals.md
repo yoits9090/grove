@@ -47,3 +47,14 @@ On macOS arm64 with Python 3.14.5, seed 7, 200 nodes and 100 reads: build
 and durable root import commit 2.365 ms (66,938-byte log). This is a smoke
 measurement, not a production target; the snapshot backend's O(tree-size)
 commit cost dominates as datasets grow.
+
+
+## Second-cycle evidence
+
+The SQLite adapter now has differential tests across `TreeStore`,
+`PersistentTreeStore`, and `SQLiteTreeStore`, plus deterministic subprocess
+SIGKILL recovery tests at pre-commit and post-commit boundaries. The suite
+contains 34 tests and passes repeatedly. Workload families in
+`benchmarks/bench.py` now include `random`, `deep`, `broad`, `skew`, and
+`reopen`, with bounded deterministic JSON output including configuration,
+shape, operation counts, and reopen statistics.

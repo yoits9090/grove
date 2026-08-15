@@ -5,8 +5,9 @@
 1. **Complete:** model-like randomized tests, typed round trips, transaction
    atomicity, and fault-oriented frame recovery fixtures.
 2. **Complete:** API edge cases and compatibility contracts documented.
-3. **Started:** reproducible smoke benchmark; broad/deep/property-heavy suites
-   remain the next measurement task.
+3. **Complete for this cycle:** reproducible random/deep/broad/skew/reopen
+   workload families, differential backend tests, and SQLite subprocess crash
+   recovery fixtures.
 
 ## Next: conservative scale experiment
 
