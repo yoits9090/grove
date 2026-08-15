@@ -15,15 +15,21 @@ an honest comparison with today's JSON/materialized query path.
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import math
 import os
 import sqlite3
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from .errors import InvalidOperationError, StorageCorruptionError
-from .query import Query, _MISSING, _index_key, _property_value
+from .errors import InvalidOperationError, InvalidPropertyError, NotFoundError, StorageCorruptionError
+from .model import Node
+from .query import Query, _MISSING, _index_key, _predicate_from, _property_value
 from .sqlite_store import SQLiteTreeStore
+from .store import (_clone_properties, _decode_value, _record_to_node,
+                    _validate_id, _validate_name, _validate_timestamp,
+                    _path_parts)
 from .types import Reference
 
 # Keep SQL identifiers static and separate from the source database schema.
@@ -92,6 +98,98 @@ def _property_name(name: str) -> str:
     if "\x00" in name:
         raise ValueError("indexed property name cannot contain NUL")
     return name
+
+
+class _DirectScalarQuery(Iterable[Node]):
+    """Small query facade over candidate records decoded by the direct path.
+
+    Unlike :class:`Query`, this object deliberately has no ``_state`` map:
+    records are loaded only for matching scalar candidates.  It mirrors the
+    read-only result methods used by the experiment and keeps scope changes
+    and additional predicates deterministic.
+    """
+
+    def __init__(self, records: list[dict[str, Any]], *, recursive: bool,
+                 include_root: bool, predicate: Callable[[Node], bool] | None):
+        self._records = tuple(records)
+        self._recursive = recursive
+        self._include_root = include_root
+        self._predicate = predicate
+
+    def _copy(self, **changes: Any) -> "_DirectScalarQuery":
+        options = {
+            "recursive": self._recursive,
+            "include_root": self._include_root,
+            "predicate": self._predicate,
+        }
+        options.update(changes)
+        return _DirectScalarQuery(list(self._records), **options)
+
+    def descendants(self, *, recursive: bool = True,
+                    include_root: bool = False) -> "_DirectScalarQuery":
+        if not isinstance(recursive, bool) or not isinstance(include_root, bool):
+            raise TypeError("recursive and include_root must be bools")
+        return self._copy(recursive=recursive, include_root=include_root)
+
+    def where(self, predicate: Callable[[Node], bool] | Mapping[str, Any] | None = None,
+              **criteria: Any) -> "_DirectScalarQuery":
+        if predicate is None and not criteria:
+            return self
+        new = _predicate_from(predicate) if predicate is not None else None
+        if criteria:
+            criterion = _predicate_from(criteria)
+            assert criterion is not None
+            if new is None:
+                new = criterion
+            else:
+                old = new
+                new = lambda node: bool(old(node)) and bool(criterion(node))
+        assert new is not None
+        if self._predicate is None:
+            combined = new
+        else:
+            old = self._predicate
+            combined = lambda node: bool(old(node)) and bool(new(node))
+        return self._copy(predicate=combined)
+
+    filter = where
+
+    def by_type(self, node_type: str) -> "_DirectScalarQuery":
+        return self.where(type=node_type)
+
+    def __iter__(self) -> Iterator[Node]:
+        for record in self._records:
+            depth = record["_depth"]
+            if not self._include_root and depth == 0:
+                continue
+            if not self._recursive and ((self._include_root and depth > 1) or
+                                        (not self._include_root and depth > 1)):
+                continue
+            node = _record_to_node(record)
+            if self._predicate is None or bool(self._predicate(node)):
+                yield node
+
+    def all(self) -> list[Node]:
+        return list(self)
+
+    def first(self, default: Node | None = None) -> Node | None:
+        return next(iter(self), default)
+
+    def count(self) -> int:
+        return sum(1 for _ in self)
+
+    def ids(self) -> tuple[str, ...]:
+        return tuple(node.id for node in self)
+
+    def __len__(self) -> int:
+        return self.count()
+
+    def __bool__(self) -> bool:
+        return self.first() is not None
+
+    def __repr__(self) -> str:
+        return (f"DirectScalarQuery(recursive={self._recursive!r}, "
+                f"include_root={self._include_root!r})")
 
 
 class SQLiteScalarPropertyIndexExperiment(SQLiteTreeStore):
@@ -344,6 +442,98 @@ class SQLiteScalarPropertyIndexExperiment(SQLiteTreeStore):
 
     drop_index = drop_scalar_index
 
+    def _resolve_target_id_sql(self, target: str | Node, root_id: str) -> str:
+        """Resolve an ID/path using only the ordered SQLite edge table."""
+        if isinstance(target, Node):
+            target = target.id
+        if not isinstance(target, str):
+            raise NotFoundError(target)
+        if not isinstance(root_id, str):
+            raise StorageCorruptionError("invalid SQLite metadata root ID")
+        try:
+            _validate_id(root_id)
+        except InvalidOperationError as exc:
+            raise StorageCorruptionError("invalid SQLite metadata root ID") from exc
+        if self._conn.execute("SELECT 1 FROM nodes WHERE id=?", (root_id,)).fetchone() is None:
+            raise StorageCorruptionError("SQLite metadata root does not exist")
+        if target.startswith("/"):
+            current = root_id
+            for part in _path_parts(target):
+                row = self._conn.execute(
+                    """SELECT c.child_id FROM children c JOIN nodes n ON n.id=c.child_id
+                       WHERE c.parent_id=? AND n.name=? ORDER BY c.position LIMIT 1""",
+                    (current, part),
+                ).fetchone()
+                if row is None:
+                    raise NotFoundError(target)
+                current = row[0]
+            return current
+        row = self._conn.execute("SELECT id FROM nodes WHERE id=?", (target,)).fetchone()
+        if row is None:
+            raise NotFoundError(target)
+        return row[0]
+
+    def _decode_direct_records(
+        self, rows: list[tuple[Any, ...]], *, root_id: str
+    ) -> list[dict[str, Any]]:
+        """Decode candidate rows and child edges, without reading all nodes."""
+        records: list[dict[str, Any]] = []
+        ids: list[str] = []
+        try:
+            for row in rows:
+                (node_id, name, typ, properties, parent_id, created_at,
+                 modified_at, depth, order_path) = row
+                _validate_id(node_id)
+                _validate_name(name, root=node_id == root_id)
+                if not isinstance(typ, str) or not typ:
+                    raise InvalidOperationError("invalid node type")
+                if not isinstance(properties, str):
+                    raise InvalidOperationError("invalid node properties encoding")
+                decoded = _decode_value(json.loads(properties))
+                props = _clone_properties(decoded)
+                if parent_id is not None:
+                    _validate_id(parent_id)
+                _validate_timestamp(created_at)
+                _validate_timestamp(modified_at)
+                if not isinstance(depth, int) or isinstance(depth, bool) or depth < 0:
+                    raise InvalidOperationError("invalid query depth")
+                if not isinstance(order_path, str):
+                    raise InvalidOperationError("invalid query order")
+                records.append({
+                    "id": node_id, "name": name, "type": typ,
+                    "properties": props, "parent_id": parent_id,
+                    "children": [], "created_at": created_at,
+                    "modified_at": modified_at, "_depth": depth,
+                    "_order": order_path,
+                })
+                ids.append(node_id)
+            children: dict[str, list[str]] = {node_id: [] for node_id in ids}
+            if ids:
+                placeholders = ",".join("?" for _ in ids)
+                child_rows = self._conn.execute(
+                    f"""SELECT c.parent_id, c.child_id, c.position
+                        FROM children c JOIN nodes n ON n.id=c.child_id
+                        WHERE c.parent_id IN ({placeholders})
+                        ORDER BY c.parent_id, c.position""",
+                    ids,
+                ).fetchall()
+                positions: dict[str, int] = {node_id: 0 for node_id in ids}
+                for parent_id, child_id, position in child_rows:
+                    if parent_id not in children:
+                        raise StorageCorruptionError("invalid direct-query child parent")
+                    if not isinstance(position, int) or isinstance(position, bool) or position != positions[parent_id]:
+                        raise StorageCorruptionError("invalid direct-query child position")
+                    positions[parent_id] += 1
+                    children[parent_id].append(child_id)
+            for record in records:
+                record["children"] = children[record["id"]]
+            return records
+        except StorageCorruptionError:
+            raise
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError,
+                InvalidOperationError, InvalidPropertyError) as exc:
+            raise StorageCorruptionError(f"invalid SQLite direct-query row: {exc}") from exc
+
     def lookup_scalar(
         self,
         property_name: str,
@@ -353,12 +543,27 @@ class SQLiteScalarPropertyIndexExperiment(SQLiteTreeStore):
         recursive: bool = True,
         include_root: bool = False,
         predicate: Callable[[Any], bool] | Mapping[str, Any] | None = None,
-    ) -> Query:
-        """Lookup exact typed scalar values, preserving normal Query semantics."""
+    ) -> "_DirectScalarQuery":
+        """Lookup an exact typed scalar without loading the complete tree.
+
+        The sidecar narrows the source to matching IDs, while a recursive SQL
+        CTE computes the primary-child traversal order.  Only matching node
+        rows (and their child ID lists needed by detached :class:`Node` views)
+        are decoded into Python.  This path is intentionally limited to exact
+        scalar equality: arbitrary predicates remain a Python final filter,
+        but still run only against indexed candidates.
+        """
         property_name = _property_name(property_name)
         key = _scalar_key(value)
         if key is None:
             raise TypeError("property-index lookup values must be scalar")
+        if not isinstance(recursive, bool):
+            raise TypeError("recursive must be a bool")
+        if not isinstance(include_root, bool):
+            raise TypeError("include_root must be a bool")
+        if predicate is not None and not callable(predicate) and not isinstance(predicate, Mapping):
+            raise TypeError("predicate must be callable, a property mapping, or None")
+
         # A stale sidecar can be caused by another SQLiteTreeStore handle;
         # catch up before taking the coherent source+sidecar read snapshot.
         for _attempt in range(2):
@@ -367,34 +572,77 @@ class SQLiteScalarPropertyIndexExperiment(SQLiteTreeStore):
                 self._ensure_open()
                 self._conn.execute("BEGIN")
                 try:
-                    state, revision = self._read_state_from_connection()
+                    source = self._conn.execute(
+                        "SELECT revision, root_id FROM metadata WHERE id=1"
+                    ).fetchone()
                     metadata = self._metadata()
-                    if metadata is None or metadata[1] != revision or metadata[0] != self._source_identity():
+                    if (
+                        source is None
+                        or not isinstance(source[0], int)
+                        or isinstance(source[0], bool)
+                        or source[0] < 0
+                        or metadata is None
+                        or metadata[0] != self._source_identity()
+                        or metadata[1] != source[0]
+                    ):
                         self._conn.rollback()
                         continue
-                    root_id = self._resolve(state, target)
-                    rows = self._conn.execute(
-                        f"""SELECT node_id FROM {_ALIAS}.property_values
-                            WHERE property_name=? AND value_type=? AND value=?""",
+                    root_id = self._resolve_target_id_sql(target, source[1])
+                    candidate_missing = self._conn.execute(
+                        f"""SELECT 1 FROM {_ALIAS}.property_values p
+                            LEFT JOIN nodes n ON n.id = p.node_id
+                            WHERE p.property_name=? AND p.value_type=? AND p.value=?
+                              AND n.id IS NULL LIMIT 1""",
                         (property_name, key[0], key[1]),
+                    ).fetchone()
+                    if candidate_missing is not None:
+                        raise StorageCorruptionError(
+                            "property-index row references a missing source node"
+                        )
+                    # A fixed-width position component gives SQLite's text
+                    # ordering the same depth-first order as Query._iter_ids.
+                    # SQLite child positions are signed 64-bit integers, so
+                    # 20 columns cover every representable position.
+                    rows = self._conn.execute(
+                        f"""WITH RECURSIVE tree(node_id, order_path, depth) AS (
+                               SELECT ?, CAST('' AS TEXT), 0
+                               UNION ALL
+                               SELECT c.child_id,
+                                      tree.order_path || printf('%020d/', c.position),
+                                      tree.depth + 1
+                               FROM tree
+                               JOIN children c ON c.parent_id = tree.node_id
+                           )
+                           SELECT n.id, n.name, n.type, n.properties, n.parent_id,
+                                  n.created_at, n.modified_at, tree.depth, tree.order_path
+                           FROM tree
+                           JOIN nodes n ON n.id = tree.node_id
+                           JOIN {_ALIAS}.property_values p ON p.node_id = n.id
+                           WHERE p.property_name=? AND p.value_type=? AND p.value=?
+                           ORDER BY tree.order_path""",
+                        (root_id, property_name, key[0], key[1]),
                     ).fetchall()
-                    ids = frozenset(row[0] for row in rows)
+                    records = self._decode_direct_records(rows, root_id=root_id)
                     self._conn.commit()
                 except Exception:
                     self._conn.rollback()
                     raise
-            def exact(node: Any) -> bool:
+            exact_key = _index_key(value)
+            def exact(node: Node) -> bool:
                 actual = _property_value(node.properties, property_name)
-                return actual is not _MISSING and _index_key(actual) == _index_key(value)
-            query = Query._from_snapshot(
-                state,
-                root_id,
+                return actual is not _MISSING and _index_key(actual) == exact_key
+            final_predicate = exact
+            if predicate is not None:
+                extra = _predicate_from(predicate)
+                assert extra is not None
+                old = final_predicate
+                final_predicate = lambda node: bool(old(node)) and bool(extra(node))
+            return _DirectScalarQuery(
+                records,
                 recursive=recursive,
                 include_root=include_root,
-                candidate_ids=ids,
-                predicate=exact,
+                predicate=final_predicate,
             )
-            return query.where(predicate) if predicate is not None else query
         raise StorageCorruptionError("property-index revision changed during lookup")
 
     query_scalar = lookup_scalar

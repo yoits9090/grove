@@ -121,3 +121,108 @@ def test_sqlite_fast_read_path_still_refreshes_other_instance(tmp_path):
     with SQLiteTreeStore(path) as first, SQLiteTreeStore(path) as second:
         node = first.create("from-first")
         assert second.get(node.id).name == "from-first"
+
+
+
+def test_sqlite_raw_handle_mutation_invalidates_read_cache(tmp_path):
+    """The read fast path must notice writes made outside GROVE."""
+    path = tmp_path / "raw-mutation.db"
+    with SQLiteTreeStore(path) as db:
+        node = db.create("before")
+        with sqlite3.connect(path) as raw:
+            raw.execute("UPDATE nodes SET name = 'after' WHERE id = ?", (node.id,))
+            raw.commit()
+        assert db.get(node.id).name == "after"
+
+
+def test_sqlite_closed_store_rejects_public_resources(tmp_path):
+    path = tmp_path / "closed.db"
+    db = SQLiteTreeStore(path)
+    node = db.create("node")
+    tx = db.transaction()
+    db.close()
+
+    operations = (
+        lambda: db.get(node.id),
+        lambda: db.exists(node.id),
+        lambda: db.path(node.id),
+        lambda: db.export(),
+        lambda: db.export_json(),
+        lambda: db.query().all(),
+        lambda: db.subscribe(lambda _change: None),
+        lambda: db.index_property("kind"),
+        lambda: db.drop_index("kind"),
+        db.transaction,
+    )
+    for operation in operations:
+        with pytest.raises(InvalidOperationError, match="store is closed"):
+            operation()
+
+    # A transaction snapshot is detached and remains readable, but publishing
+    # it after its owning durable resource closes must fail closed.
+    assert tx.get(node.id).id == node.id
+    with pytest.raises(InvalidOperationError, match="store is closed"):
+        tx.commit()
+
+
+def test_sqlite_schema_rejects_a_second_root(tmp_path):
+    path = tmp_path / "second-root.db"
+    with SQLiteTreeStore(path) as db:
+        parent = db.create("parent")
+        child = db.create("child", parent=parent.id)
+
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        # Keep the row otherwise valid but detach it from the primary root.
+        conn.execute("UPDATE nodes SET parent_id = NULL WHERE id = ?", (child.id,))
+        conn.execute("DELETE FROM children WHERE child_id = ?", (child.id,))
+        conn.commit()
+    finally:
+        conn.close()
+    with pytest.raises(StorageCorruptionError):
+        SQLiteTreeStore(path)
+
+
+
+def _write_relaxed_sqlite_schema(path, *, duplicate_metadata=False, duplicate_edge=False):
+    """Build rows without SQLite constraints to exercise defensive readers."""
+    now = "2020-01-01T00:00:00+00:00"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE metadata (id INTEGER, revision INTEGER, root_id TEXT);
+        CREATE TABLE nodes (
+            id TEXT, name TEXT, type TEXT, properties TEXT, parent_id TEXT,
+            created_at TEXT, modified_at TEXT
+        );
+        CREATE TABLE children (parent_id TEXT, child_id TEXT, position INTEGER);
+        """
+    )
+    conn.execute("INSERT INTO metadata VALUES (1, 0, 'root')")
+    if duplicate_metadata:
+        conn.execute("INSERT INTO metadata VALUES (2, 0, 'root')")
+    conn.executemany(
+        "INSERT INTO nodes VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            ("root", "", "root", "{}", None, now, now),
+            ("child", "child", "object", "{}", "root", now, now),
+        ],
+    )
+    conn.execute("INSERT INTO children VALUES ('root', 'child', 0)")
+    if duplicate_edge:
+        conn.execute("INSERT INTO children VALUES ('root', 'child', 1)")
+    conn.commit()
+    conn.close()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    ({"duplicate_metadata": True}, {"duplicate_edge": True}),
+    ids=("duplicate-metadata", "duplicate-child-edge"),
+)
+def test_sqlite_relational_duplicates_fail_closed(tmp_path, kwargs):
+    path = tmp_path / "duplicate-relational-row.db"
+    _write_relaxed_sqlite_schema(path, **kwargs)
+    with pytest.raises(StorageCorruptionError):
+        SQLiteTreeStore(path)
