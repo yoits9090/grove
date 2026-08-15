@@ -1,10 +1,10 @@
-# Logical snapshot/history prototype (isolated experiment)
+# Logical SQLite history API
 
 ## Question
 
-GROVE currently offers detached read/query snapshots, but no durable logical
-history API. This note compares three ways to expose history and records an
-isolated prototype without changing the core package.
+GROVE offers detached read/query snapshots and now exposes a small durable
+logical history API. This note records the design and its boundaries without
+changing the core storage commit path.
 
 ## Options
 
@@ -19,10 +19,13 @@ uses filenames and enumerates them. Opening a snapshot validates it through
 callers cannot mutate the artifact.
 
 This is a *logical revision artifact*: a full database copy, not an API that
-keeps a transaction open indefinitely. Capture is idempotent by revision and
-publishes only after validation. A failed capture removes its temporary file.
-The prototype lives in `experiments/sqlite_history.py` and is intentionally
-private/unsupported.
+keeps a transaction open indefinitely. `grove.SQLiteHistory.capture()` is
+idempotent by revision and publishes only after validation; a failed capture
+removes its temporary file. `Snapshot.open()` validates through
+`SQLiteTreeStore` and returns a detached in-memory `TreeStore`, so callers
+cannot accidentally write the artifact. The artifact filename is
+`snapshot-<revision>.db`; `revisions()` enumerates valid-looking names and
+`snapshot(revision)` validates the selected artifact.
 
 ### 2. Long-lived SQLite read transaction
 
@@ -47,10 +50,10 @@ this experiment.
 
 ## Recommendation
 
-Adopt the online-backup artifact as the next *isolated* history proof of
-concept. Define a future public API around explicit immutable handles, e.g.
-`capture() -> Snapshot`, `snapshot(revision)`, `Snapshot.open()` and retention,
-with no accidental writes to history. Use scoped read transactions only for
+Adopt the online-backup artifact as the small public API: `capture() ->
+Snapshot`, `snapshot(revision)`, `Snapshot.open()`, and `revisions()`. Handles
+are immutable dataclasses and opening returns a detached store; there is no
+accidental write path to history. Use scoped read transactions only for
 short-lived consistent reads. Revisit a version table/structural sharing only
 when measured full-copy cost or retention requirements demand it; then design
 it as a separate storage format with migration and GC, not as an optimization
@@ -85,5 +88,9 @@ $ .venv/bin/python experiments/sqlite_history.py
 2 True True
 ```
 
-The prototype has no retention deletion, encryption, cross-filesystem rename,
-or multi-database atomicity; these are deliberate non-goals.
+The API has no retention deletion, encryption, cross-filesystem rename, or
+multi-database atomicity. Artifacts are immutable by convention only: an
+external process with write access can modify one, but subsequent
+`Snapshot.open()`/`snapshot()` validation fails closed. Captures are full
+SQLite copies and therefore consume O(database size) space per retained
+revision.

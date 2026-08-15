@@ -7,9 +7,10 @@ from .sqlite_store import SQLiteTreeStore
 from .types import Reference
 from .query import Query, PropertyIndex
 from .schema import Schema, SchemaError, SchemaValidationError
+from .history import SQLiteHistory, Snapshot
 
 __all__ = ["AlreadyExistsError", "GroveError", "InvalidOperationError",
            "InvalidPropertyError", "NotFoundError", "Node", "PersistentTreeStore",
            "PropertyIndex", "Query", "Reference", "Schema", "SchemaError", "SchemaValidationError",
-           "SQLiteTreeStore", "StorageCorruptionError", "TreeStore"]
+           "SQLiteTreeStore", "SQLiteHistory", "Snapshot", "StorageCorruptionError", "TreeStore"]
 __version__ = "0.1.0"

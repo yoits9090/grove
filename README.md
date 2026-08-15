@@ -23,13 +23,15 @@ scale and feature breadth.
 - An experimental SQLite WAL backend with relational `nodes`/`children` edges,
   durable revisions, and cross-instance optimistic conflict detection
   (`SQLiteTreeStore`).
+- A small durable logical history API (`SQLiteHistory`, `Snapshot`) built from
+  SQLite online-backup artifacts; see `docs/logical-history-experiment.md`.
 - Basic synchronous change subscriptions and a `grove` tree/get/export CLI.
 
 The snapshot log is intentionally a conservative reference implementation. It
 rewrites the whole logical state at each commit and is unsuitable for large
 workloads. SQLite is the current correctness-first storage experiment; see
-`docs/decisions.md`. Disposable durable scalar-index and logical-history
-experiments are documented separately and are not part of the public API.
+`docs/decisions.md`. The durable scalar-index experiment remains private; logical history is a
+small public API with deliberately narrow guarantees.
 
 ## Quick start
 
