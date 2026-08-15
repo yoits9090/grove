@@ -182,24 +182,49 @@ class Query(Iterable[Node]):
         return self.where(type=node_type)
 
     def _iter_ids(self) -> Iterator[str]:
+        """Yield matching IDs in depth-first child order without recursion.
+
+        The query already owns a detached state snapshot.  Traversal itself
+        keeps only a stack of pending IDs (O(depth) for a chain and O(width)
+        for a broad tree) and never builds a result list.  An explicit stack
+        also avoids Python's recursion limit for valid, very deep trees.
+        """
         nodes = self._state["nodes"]
         if self._include_root:
-            initial = [self._root_id]
+            initial = (self._root_id,)
         else:
-            initial = list(nodes[self._root_id]["children"])
+            initial = nodes[self._root_id]["children"]
 
-        def walk(node_id: str, depth: int) -> Iterator[str]:
+        # Push children in reverse order so pop() preserves the stored order.
+        # ``list`` here is limited to the current scope's direct children; a
+        # broad root therefore uses O(width) traversal state, while descendants
+        # are released as each frame is consumed.
+        pending = [(node_id, 0) for node_id in reversed(initial)]
+        while pending:
+            node_id, depth = pending.pop()
             if self._candidate_ids is None or node_id in self._candidate_ids:
                 yield node_id
             # With include_root=True and recursive=False, include the target
             # and its direct children. Without the target, recursive=False
             # means exactly the target's direct children.
             if self._recursive or (self._include_root and depth == 0):
-                for child_id in nodes[node_id]["children"]:
-                    yield from walk(child_id, depth + 1)
+                children = nodes[node_id]["children"]
+                pending.extend((child_id, depth + 1) for child_id in reversed(children))
 
-        for node_id in initial:
-            yield from walk(node_id, 0)
+    def iter(self) -> Iterator[Node]:
+        """Return a lazy iterator over this query's detached snapshot.
+
+        Calling ``iter(query)`` remains equivalent.  No result collection is
+        retained: only traversal bookkeeping and the currently yielded,
+        detached :class:`Node` are live outside the snapshot.  The snapshot
+        itself is intentionally retained so later store commits cannot alter
+        iteration results.
+        """
+        return iter(self)
+
+    # Descriptive aliases for callers who prefer explicit traversal names.
+    iter_nodes = iter
+    traverse = iter
 
     def __iter__(self) -> Iterator[Node]:
         for node_id in self._iter_ids():
