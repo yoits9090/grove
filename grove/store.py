@@ -484,6 +484,7 @@ class TreeStore:
     create_index = index_property
     index = index_property
     find = query
+    traverse = query
 
     def drop_index(self, property_name: str) -> None:
         with self._lock:
@@ -598,6 +599,7 @@ class Transaction:
         return query.where(criteria) if criteria else query
 
     find = query
+    traverse = query
 
     def _touch(self, nid: str, kind: str):
         self._state["nodes"][nid]["modified_at"] = _now()

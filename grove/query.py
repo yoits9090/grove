@@ -184,9 +184,10 @@ class Query(Iterable[Node]):
     def _iter_ids(self) -> Iterator[str]:
         """Yield matching IDs in depth-first child order without recursion.
 
-        The query already owns a detached state snapshot.  Traversal itself
-        keeps only a stack of pending IDs (O(depth) for a chain and O(width)
-        for a broad tree) and never builds a result list.  An explicit stack
+        The query already owns a detached state snapshot. Traversal keeps only
+        a bounded frontier of pending IDs and never builds a result list; the
+        snapshot itself remains O(N), while traversal bookkeeping is bounded by
+        the active frontier rather than the number of yielded results.  An explicit stack
         also avoids Python's recursion limit for valid, very deep trees.
         """
         nodes = self._state["nodes"]
@@ -195,21 +196,24 @@ class Query(Iterable[Node]):
         else:
             initial = nodes[self._root_id]["children"]
 
-        # Push children in reverse order so pop() preserves the stored order.
-        # ``list`` here is limited to the current scope's direct children; a
-        # broad root therefore uses O(width) traversal state, while descendants
-        # are released as each frame is consumed.
-        pending = [(node_id, 0) for node_id in reversed(initial)]
+        # Keep one child iterator per active depth rather than a reversed list
+        # of all pending IDs.  This preserves stored order while bounding
+        # traversal bookkeeping by depth, including for a broad sibling set.
+        pending = [(iter(initial), 0)]
         while pending:
-            node_id, depth = pending.pop()
+            children, depth = pending[-1]
+            try:
+                node_id = next(children)
+            except StopIteration:
+                pending.pop()
+                continue
             if self._candidate_ids is None or node_id in self._candidate_ids:
                 yield node_id
             # With include_root=True and recursive=False, include the target
             # and its direct children. Without the target, recursive=False
             # means exactly the target's direct children.
             if self._recursive or (self._include_root and depth == 0):
-                children = nodes[node_id]["children"]
-                pending.extend((child_id, depth + 1) for child_id in reversed(children))
+                pending.append((iter(nodes[node_id]["children"]), depth + 1))
 
     def iter(self) -> Iterator[Node]:
         """Return a lazy iterator over this query's detached snapshot.
