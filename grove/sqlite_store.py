@@ -12,6 +12,9 @@ import copy
 import json
 import os
 import sqlite3
+import tempfile
+import time
+import math
 from pathlib import Path
 from typing import Any
 
@@ -72,16 +75,37 @@ class SQLiteTreeStore(TreeStore):
     ``foreign_keys=ON``, and ``synchronous=FULL`` on this store's connection.
     """
 
-    def __init__(self, path: str | os.PathLike[str]):
+    def __init__(self, path: str | os.PathLike[str], *, schema=None,
+                 timeout: float = 30.0, write_retries: int = 2,
+                 retry_delay: float = 0.01):
+        """Open a GROVE SQLite database.
+
+        ``timeout`` is the per-attempt SQLite lock timeout in seconds.  A
+        writer may make at most ``write_retries`` additional attempts after a
+        busy/locked failure, with exponential backoff beginning at
+        ``retry_delay`` seconds.  The policy is deliberately bounded: callers
+        receive :class:`InvalidOperationError` rather than waiting forever for
+        another process.  Reads are not retried because WAL readers do not
+        need a writer lock.
+        """
         raw_path = os.fspath(path)
         if not isinstance(raw_path, str):
             raise TypeError("database path must be a string or path-like object")
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout < 0:
+            raise ValueError("timeout must be a finite non-negative number")
+        if isinstance(write_retries, bool) or not isinstance(write_retries, int) or write_retries < 0:
+            raise ValueError("write_retries must be a non-negative integer")
+        if isinstance(retry_delay, bool) or not isinstance(retry_delay, (int, float)) or not math.isfinite(retry_delay) or retry_delay < 0:
+            raise ValueError("retry_delay must be a finite non-negative number")
 
         self.path_on_disk = Path(raw_path) if raw_path != ":memory:" else None
         self._memory = raw_path == ":memory:"
         self._closed = False
         self._db_path = raw_path
         self._db_uri = raw_path.startswith("file:")
+        self._timeout = float(timeout)
+        self._write_retries = write_retries
+        self._retry_delay = float(retry_delay)
         if not self._memory and not self._db_uri:
             self.path_on_disk.parent.mkdir(parents=True, exist_ok=True)
 
@@ -90,19 +114,28 @@ class SQLiteTreeStore(TreeStore):
         # normal file locking and WAL reader/writer concurrency.
         self._conn = sqlite3.connect(
             raw_path,
-            timeout=30.0,
+            timeout=self._timeout,
             isolation_level=None,
             check_same_thread=False,
             uri=self._db_uri,
         )
         try:
             self._conn.execute("PRAGMA foreign_keys = ON")
-            self._conn.execute("PRAGMA busy_timeout = 30000")
+            self._conn.execute(
+                f"PRAGMA busy_timeout = {int(self._timeout * 1000)}"
+            )
             if not self._memory:
                 # journal_mode is persistent for a file database.  Setting it
                 # during construction (before any transaction) is important:
                 # a torn process does not leave a partially applied snapshot.
-                self._conn.execute("PRAGMA journal_mode = WAL")
+                try:
+                    self._conn.execute("PRAGMA journal_mode = WAL")
+                except sqlite3.OperationalError as exc:
+                    if self._is_busy(exc):
+                        raise InvalidOperationError(
+                            "SQLite writer lock unavailable while enabling WAL"
+                        ) from exc
+                    raise
             self._conn.execute("PRAGMA synchronous = FULL")
             existing_tables = {row[0] for row in self._conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
@@ -125,7 +158,7 @@ class SQLiteTreeStore(TreeStore):
 
         # super() validates and deep-copies the state, and creates the normal
         # subscriptions and re-entrant lock used by TreeStore.
-        super().__init__(state=state)
+        super().__init__(state=state, schema=schema)
         self._version = revision
         # SQLite's data_version changes when another connection commits.  Keep
         # it alongside the durable revision so the read fast path still
@@ -141,9 +174,37 @@ class SQLiteTreeStore(TreeStore):
         if self._closed:
             raise InvalidOperationError("store is closed")
 
+    @staticmethod
+    def _is_busy(exc: sqlite3.OperationalError) -> bool:
+        """Return whether an operational error is a transient writer lock."""
+        code = getattr(exc, "sqlite_errorcode", None)
+        # SQLITE_BUSY and SQLITE_LOCKED (including extended variants).
+        if isinstance(code, int) and (code & 0xff) in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+            return True
+        message = str(exc).lower()
+        return "database is locked" in message or "database table is locked" in message
+
+    def _begin_immediate(self) -> None:
+        """Acquire SQLite's writer lock under a finite, explicit retry policy."""
+        for attempt in range(self._write_retries + 1):
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                return
+            except sqlite3.OperationalError as exc:
+                if not self._is_busy(exc):
+                    raise
+                if attempt >= self._write_retries:
+                    raise InvalidOperationError(
+                        "SQLite writer lock unavailable after "
+                        f"{attempt + 1} attempt(s)"
+                    ) from exc
+                delay = self._retry_delay * (2 ** attempt)
+                if delay:
+                    time.sleep(delay)
+
     def _initialize_or_load(self) -> tuple[dict[str, Any], int]:
         """Create the initial root, or atomically load an existing database."""
-        self._conn.execute("BEGIN IMMEDIATE")
+        self._begin_immediate()
         try:
             metadata = self._conn.execute(
                 "SELECT revision, root_id FROM metadata WHERE id = 1"
@@ -361,7 +422,7 @@ class SQLiteTreeStore(TreeStore):
             self._data_version = self._conn.execute(
                 "PRAGMA data_version"
             ).fetchone()[0]
-            return Transaction(self, revision, copy.deepcopy(state))
+            return Transaction(self, revision, copy.deepcopy(state), self._schema)
 
     def get(self, target):
         self._refresh()
@@ -380,6 +441,111 @@ class SQLiteTreeStore(TreeStore):
     def export(self, target="/"):
         self._refresh()
         return super().export(target)
+
+    def backup(self, destination: str | os.PathLike[str] | sqlite3.Connection) -> None:
+        """Create a consistent SQLite online backup.
+
+        ``destination`` may be a filesystem path or an open
+        :class:`sqlite3.Connection`.  Path backups are published with an
+        atomic rename after SQLite has completed the copy; an existing target
+        is replaced.  The source is held in a read transaction for the copy,
+        so concurrent commits are excluded from the backup's view.  A backup
+        never closes a caller-provided connection and fails explicitly when
+        this store is closed or the destination aliases the source database.
+        """
+        with self._lock:
+            self._ensure_open()
+            destination_path: Path | None = None
+            temporary: Path | None = None
+            destination_conn: sqlite3.Connection | None = None
+            owns_connection = False
+            if isinstance(destination, sqlite3.Connection):
+                if destination is self._conn:
+                    raise InvalidOperationError("backup destination cannot be the source connection")
+                if destination.in_transaction:
+                    raise InvalidOperationError(
+                        "backup destination connection has an active transaction"
+                    )
+                destination_conn = destination
+            else:
+                try:
+                    raw_destination = os.fspath(destination)
+                except TypeError as exc:
+                    raise TypeError("backup destination must be a path or sqlite connection") from exc
+                if not isinstance(raw_destination, str) or raw_destination == ":memory:":
+                    raise ValueError("backup destination must be a filesystem path")
+                destination_path = Path(raw_destination)
+                source_path = self.path_on_disk
+                try:
+                    if source_path is not None and destination_path.resolve() == source_path.resolve():
+                        raise InvalidOperationError("backup destination cannot be the source database")
+                except OSError:
+                    # If canonicalization fails, SQLite will still report a
+                    # useful error; do not silently overwrite the source.
+                    if source_path is not None and os.path.abspath(destination_path) == os.path.abspath(source_path):
+                        raise InvalidOperationError("backup destination cannot be the source database")
+                destination_path.parent.mkdir(parents=True, exist_ok=True)
+                fd, temporary_name = tempfile.mkstemp(
+                    prefix=f".{destination_path.name}.", suffix=".tmp",
+                    dir=destination_path.parent,
+                )
+                os.close(fd)
+                temporary = Path(temporary_name)
+                destination_conn = sqlite3.connect(temporary, isolation_level=None)
+                owns_connection = True
+            try:
+                # Pin a coherent source snapshot.  Validate it before and
+                # after copying so malformed/out-of-band rows never become a
+                # backup artifact that appears successful.
+                self._conn.execute("BEGIN")
+                _state, revision = self._read_state_from_connection()
+                self._conn.backup(destination_conn, name="main")
+                copied = destination_conn.execute(
+                    "SELECT revision, root_id FROM metadata WHERE id = 1"
+                ).fetchone()
+                if copied != (revision, _state["root_id"]):
+                    raise StorageCorruptionError("SQLite backup changed revision during capture")
+                destination_conn.commit()
+                self._conn.commit()
+                if destination_path is not None:
+                    os.replace(temporary, destination_path)
+                    temporary = None
+                    try:
+                        directory_fd = os.open(destination_path.parent, os.O_RDONLY)
+                        try:
+                            os.fsync(directory_fd)
+                        finally:
+                            os.close(directory_fd)
+                    except OSError:
+                        pass
+            except sqlite3.DatabaseError as exc:
+                try:
+                    self._conn.rollback()
+                except sqlite3.Error:
+                    pass
+                try:
+                    destination_conn.rollback()
+                except sqlite3.Error:
+                    pass
+                raise InvalidOperationError(f"SQLite backup failed: {exc}") from exc
+            except Exception:
+                try:
+                    self._conn.rollback()
+                except sqlite3.Error:
+                    pass
+                try:
+                    destination_conn.rollback()
+                except sqlite3.Error:
+                    pass
+                raise
+            finally:
+                if owns_connection and destination_conn is not None:
+                    destination_conn.close()
+                if temporary is not None:
+                    try:
+                        temporary.unlink()
+                    except FileNotFoundError:
+                        pass
 
     def export_json(self, target="/", *, indent=2):
         self._refresh()
@@ -450,7 +616,7 @@ class SQLiteTreeStore(TreeStore):
     def _commit(self, tx: Transaction) -> None:
         self._ensure_open()
         with self._lock:
-            self._conn.execute("BEGIN IMMEDIATE")
+            self._begin_immediate()
             try:
                 metadata = self._conn.execute(
                     "SELECT revision, root_id FROM metadata WHERE id = 1"
@@ -478,6 +644,9 @@ class SQLiteTreeStore(TreeStore):
                     )
 
                 _check_invariants(tx._state)
+                for _record in tx._state["nodes"].values():
+                    self._schema.validate(_record["type"], _record["properties"],
+                                          node_name=_record["name"])
                 old_state = self._state
                 self._write_state(tx._state)
                 new_revision = current_revision + 1

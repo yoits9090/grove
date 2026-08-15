@@ -15,7 +15,7 @@ authors = [{name = "GROVE contributors"}]
 grove = "grove.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["grove*"]
+include = ["grove*", "experiments*"]
 
 [dependency-groups]
 dev = ["pytest==8.3.5"]

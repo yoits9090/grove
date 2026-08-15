@@ -32,3 +32,20 @@
    regresses.
 8. Incremental Merkle hashes and lazy traversal for out-of-memory trees.
 9. Historical revisions/diffs/rollback, schema validation, and multi-process API.
+
+
+## Fifth-cycle decisions
+
+7. **Completed experiment:** content-addressed immutable node blobs and atomic
+   root manifests demonstrated unchanged-subtree sharing, strict canonical
+   validation, corruption rejection, and GC accounting. It remains isolated;
+   success does not justify replacing SQLite without larger write-amplification
+   and crash evidence.
+8. **Completed experiment:** incremental Merkle hashing measures reusable
+   subtree digests. Hashes intentionally exclude mutable modification metadata
+   for location-independent subtree content; full-store callers can include
+   ancestry through the exported structure.
+9. **Completed API slice:** optional schema validation is atomic across create,
+   update, import, transactions, and durable backends.
+10. **Completed lifecycle slice:** bounded SQLite writer retries, online backup,
+   closed-handle errors, and malformed out-of-band schema fail-closed behavior.

@@ -87,3 +87,14 @@ the materialized baseline measured 52.336 ms median versus 12.095 ms for the
 direct indexed path (4.327x). Earlier full-materialization runs were slower than
 baseline; neither result is generalized into the public API. Broader predicate,
 mutation, crash, and workload validation remains required.
+
+
+## Fifth-cycle evidence
+
+The suite now includes optional schema validation, immutable content-addressed
+snapshot tests, incremental Merkle tests, bounded SQLite writer lifecycle
+coverage, online backup tests, and malformed external-schema tests. The full
+suite passes under `uv run python -m pytest -q`.
+
+The structural-sharing and Merkle work is intentionally isolated under
+`experiments/`; neither experiment is a production performance claim.

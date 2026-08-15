@@ -25,6 +25,7 @@ from .errors import (AlreadyExistsError, InvalidOperationError,
                      StorageCorruptionError)
 from .model import Node
 from .types import Reference
+from .schema import Schema, SchemaValidationError
 
 _MAGIC = b"GROV1\0"
 _HEADER = struct.Struct(">6sQ")
@@ -343,11 +344,24 @@ class Subscription:
 
 
 class TreeStore:
-    """Thread-safe in-memory tree with optimistic atomic transactions."""
-    def __init__(self, *, state: dict[str, Any] | None = None):
+    """Thread-safe in-memory tree with optimistic atomic transactions.
+
+    ``schema`` is optional.  Pass a :class:`~grove.schema.Schema` (or its
+    type-to-declaration mapping) to validate node types and properties on every
+    create, update, and import operation.
+    """
+    def __init__(self, *, state: dict[str, Any] | None = None,
+                 schema: Schema | Mapping[str, Any] | None = None):
         self._lock = threading.RLock()
+        self._schema = schema if isinstance(schema, Schema) else Schema(schema)
         self._state = _state_copy(state) if state is not None else _new_state()
         _check_invariants(self._state)
+        # Existing state supplied to a schema-configured store must not bypass
+        # validation.  This also makes custom state loading fail before the
+        # store becomes observable.
+        for _record in self._state["nodes"].values():
+            self._schema.validate(_record["type"], _record["properties"],
+                                  node_name=_record["name"])
         self._version = 0
         self._subscriptions: set[Subscription] = set()
         # Secondary indexes are lightweight, lazily rebuilt views.  Keeping
@@ -358,6 +372,27 @@ class TreeStore:
     @property
     def root(self) -> Node:
         return self.get("/")
+
+    @property
+    def schema(self) -> Schema:
+        """The store's immutable-by-convention validation schema."""
+        return self._schema
+
+    def set_schema(self, schema: Schema | Mapping[str, Any] | None) -> Schema:
+        """Replace the schema after validating the complete current state.
+
+        The replacement is atomic: an invalid schema or existing node leaves
+        the previous schema installed.
+        """
+        candidate = schema if isinstance(schema, Schema) else Schema(schema)
+        with self._lock:
+            for _record in self._state["nodes"].values():
+                candidate.validate(_record["type"], _record["properties"],
+                                   node_name=_record["name"])
+            self._schema = candidate
+            return candidate
+
+    configure_schema = set_schema
 
     def _resolve(self, state: dict[str, Any], target: str | Node) -> str:
         if isinstance(target, Node):
@@ -459,7 +494,7 @@ class TreeStore:
 
     def transaction(self) -> "Transaction":
         with self._lock:
-            return Transaction(self, self._version, _state_copy(self._state))
+            return Transaction(self, self._version, _state_copy(self._state), self._schema)
 
     def _mutate(self, method: str, *args, **kwargs):
         with self.transaction() as tx:
@@ -501,6 +536,9 @@ class TreeStore:
             if tx._base_version != self._version:
                 raise InvalidOperationError("transaction conflict: store changed since transaction began")
             _check_invariants(tx._state)
+            for _record in tx._state["nodes"].values():
+                self._schema.validate(_record["type"], _record["properties"],
+                                      node_name=_record["name"])
             old=self._state
             self._state = tx._state
             self._version += 1
@@ -514,8 +552,10 @@ class TreeStore:
 
 
 class Transaction:
-    def __init__(self, store: TreeStore, base_version: int, state: dict[str, Any]):
+    def __init__(self, store: TreeStore, base_version: int, state: dict[str, Any],
+                 schema: Schema | None = None):
         self._store, self._base_version, self._state = store, base_version, state
+        self._schema = schema if schema is not None else store.schema
         self._changes: list[Change] = []
         self._done = False
 
@@ -573,7 +613,9 @@ class Transaction:
         if any(self._state["nodes"][cid]["name"] == name for cid in parent_rec["children"]): raise AlreadyExistsError(name)
         if index is not None and (not isinstance(index,int) or index < 0 or index > len(parent_rec["children"])):
             raise InvalidOperationError("index out of range")
-        now=_now(); record={"id":node_id,"name":name,"type":type,"properties":_clone_properties(properties),"parent_id":parent_id,"children":[],"created_at":now,"modified_at":now}
+        cloned_properties = _clone_properties(properties)
+        self._schema.validate(type, cloned_properties, node_name=name)
+        now=_now(); record={"id":node_id,"name":name,"type":type,"properties":cloned_properties,"parent_id":parent_id,"children":[],"created_at":now,"modified_at":now}
         self._state["nodes"][node_id]=record
         children=parent_rec["children"]
         if index is None: children.append(node_id)
@@ -594,6 +636,10 @@ class Transaction:
             if merge:
                 merged=copy.deepcopy(rec["properties"]); merged.update(new_props); rec["properties"]=merged
             else: rec["properties"]=new_props
+        candidate_type = type if type is not None else rec["type"]
+        candidate_properties = rec["properties"]
+        self._schema.validate(candidate_type, candidate_properties,
+                              node_name=rec["name"])
         if type is not None: rec["type"]=type
         self._touch(nid,"update"); return _record_to_node(rec)
 
@@ -697,6 +743,7 @@ class Transaction:
             if not isinstance(decoded_properties, Mapping):
                 raise InvalidPropertyError("properties must be a mapping")
             props=_clone_properties(decoded_properties)
+            self._schema.validate(raw["type"], props, node_name=raw.get("name"))
             if "created_at" in raw: _validate_timestamp(raw["created_at"])
             if "modified_at" in raw: _validate_timestamp(raw["modified_at"])
             children=raw["children"]
@@ -791,12 +838,12 @@ class PersistentTreeStore(TreeStore):
     before publishing the new in-memory state. A truncated final frame is
     ignored on recovery; a complete frame with a bad checksum is rejected.
     """
-    def __init__(self, path: str | os.PathLike[str]):
+    def __init__(self, path: str | os.PathLike[str], *, schema: Schema | Mapping[str, Any] | None = None):
         self.path_on_disk=Path(path)
         self.path_on_disk.parent.mkdir(parents=True, exist_ok=True)
         self._file_lock=threading.RLock()
         state=self._recover()
-        super().__init__(state=state)
+        super().__init__(state=state, schema=schema)
         if self.path_on_disk.stat().st_size == 0:
             with self._file_lock:
                 self._append(state)

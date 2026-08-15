@@ -16,6 +16,8 @@ scale and feature breadth.
   and references.
 - Detached snapshot queries with typed predicates and lightweight in-memory
   property indexes (`Query`, `PropertyIndex`).
+- Optional schemas for node types and property constraints, validated atomically
+  on create, update, and import (`Schema`, `SchemaValidationError`).
 - A checksummed append-only whole-snapshot log with fsync and safe truncated-tail
   recovery (`PersistentTreeStore`).
 - An experimental SQLite WAL backend with relational `nodes`/`children` edges,
@@ -54,3 +56,35 @@ with PersistentTreeStore("grove.log") as db:
 ```
 
 Run tests with `uv run pytest`. The CLI is `uv run grove DB tree`.
+
+## Optional schemas
+
+Pass a `Schema` when constructing any store (including `PersistentTreeStore`
+and `SQLiteTreeStore`) to enforce node type and property constraints. A
+shorthand declaration maps property names to Python types; the explicit form
+adds required properties and rejects unknown properties:
+
+```python
+from grove import Schema, SchemaValidationError, TreeStore
+
+schema = Schema({
+    "person": {
+        "properties": {"name": str, "age": {"type": int, "required": True}},
+        "required": ["name"],
+        "allow_extra": False,
+    },
+})
+db = TreeStore(schema=schema)
+db.create("alice", type="person", properties={"name": "Alice", "age": 42})
+try:
+    db.create("bad", type="person", properties={"name": 7, "age": 1})
+except SchemaValidationError:
+    pass  # no node was created
+```
+
+A schema with declared types rejects undeclared types by default (the root
+sentinel is always allowed). Set `allow_unknown_types=True` to constrain only
+declared types. Property constraints may be Python types, tuples of types,
+`{"type": ...}` declarations, `enum`/`values`, or a callable predicate.
+Validation is performed before each mutation is committed; failed imports and
+updates are atomic, including when used inside an explicit transaction.

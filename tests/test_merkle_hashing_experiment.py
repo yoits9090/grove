@@ -86,8 +86,8 @@ def test_subtree_export_is_self_contained_and_hashes_stably_across_move():
     before_hash = merkle_hash(before)
     store.move(left.id, right.id)
     after = store.export(left.id)
-    # GROVE export detaches the exported root's parent_id by contract.  The
-    # move operation updates modified_at, which is part of canonical payload;
-    # the digest therefore records this mutation even in a detached export.
+    # GROVE export detaches the exported root's parent_id; the content hash is
+    # location-independent for a subtree and excludes mutable modification
+    # metadata.
     assert before["parent_id"] is None and after["parent_id"] is None
-    assert before_hash != merkle_hash(after)
+    assert before_hash == merkle_hash(after)

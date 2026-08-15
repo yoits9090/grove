@@ -236,3 +236,55 @@ def test_sqlite_out_of_band_schema_drop_fails_closed_on_existing_handle(tmp_path
         raw.commit()
     with pytest.raises(StorageCorruptionError): db.get(node.id)
     db.close()
+
+
+
+def test_sqlite_online_backup_is_consistent_and_detached(tmp_path):
+    source_path = tmp_path / "live.db"
+    backup_path = tmp_path / "backup.db"
+    with SQLiteTreeStore(source_path) as source:
+        source.create("before")
+        source.backup(backup_path)
+        source.create("after")
+        # Replacing the destination is supported and should remain atomic.
+        source.backup(backup_path)
+    with SQLiteTreeStore(backup_path) as backup:
+        assert backup.exists("/before")
+        assert backup.exists("/after")
+
+
+def test_sqlite_backup_rejects_closed_or_aliased_resources(tmp_path):
+    path = tmp_path / "source.db"
+    destination = tmp_path / "copy.db"
+    db = SQLiteTreeStore(path)
+    db.create("node")
+    with pytest.raises(InvalidOperationError, match="source"):
+        db.backup(path)
+    db.close()
+    with pytest.raises(InvalidOperationError, match="store is closed"):
+        db.backup(destination)
+
+
+def test_sqlite_writer_lock_failure_is_bounded(tmp_path):
+    path = tmp_path / "busy.db"
+    with SQLiteTreeStore(path):
+        pass
+    holder = sqlite3.connect(path, timeout=0, isolation_level=None)
+    db = None
+    try:
+        holder.execute("BEGIN IMMEDIATE")
+        # Initialization itself is expected to fail boundedly while another
+        # process owns the writer lock.
+        with pytest.raises(InvalidOperationError, match="writer lock unavailable"):
+            SQLiteTreeStore(path, timeout=0, write_retries=1, retry_delay=0)
+        holder.rollback()
+        db = SQLiteTreeStore(path, timeout=0, write_retries=1, retry_delay=0)
+        holder.execute("BEGIN IMMEDIATE")
+        with pytest.raises(InvalidOperationError, match="writer lock unavailable"):
+            db.create("blocked")
+        assert not db.exists("/blocked")
+    finally:
+        if db is not None:
+            db.close()
+        holder.rollback()
+        holder.close()

@@ -39,7 +39,6 @@ _NODE_FIELDS = (
     "properties",
     "parent_id",
     "created_at",
-    "modified_at",
 )
 _REQUIRED_FIELDS = frozenset(("id", "name", "type", "properties", "children"))
 
