@@ -84,3 +84,28 @@ def test_sqlite_stale_transaction_conflicts_after_other_handle_commit(tmp_path):
         assert first.exists("/committed")
         with pytest.raises(InvalidOperationError): tx.commit()
         assert not first.exists("/pending")
+
+
+def test_sqlite_reads_skip_snapshot_materialization_when_revision_is_unchanged(tmp_path, monkeypatch):
+    path = tmp_path / "fast-read.db"
+    with SQLiteTreeStore(path) as db:
+        node = db.create("node")
+        original = db._read_state_from_connection
+        calls = 0
+
+        def counted(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(db, "_read_state_from_connection", counted)
+        for _ in range(20):
+            assert db.get(node.id).id == node.id
+        assert calls == 0
+
+
+def test_sqlite_fast_read_path_still_refreshes_other_instance(tmp_path):
+    path = tmp_path / "fast-read-refresh.db"
+    with SQLiteTreeStore(path) as first, SQLiteTreeStore(path) as second:
+        node = first.create("from-first")
+        assert second.get(node.id).name == "from-first"

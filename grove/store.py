@@ -340,6 +340,10 @@ class TreeStore:
         _check_invariants(self._state)
         self._version = 0
         self._subscriptions: set[Subscription] = set()
+        # Secondary indexes are lightweight, lazily rebuilt views.  Keeping
+        # them on the store lets callers reuse an index while preserving the
+        # immutable snapshot semantics of each query.
+        self._indexes: dict[str, Any] = {}
 
     @property
     def root(self) -> Node:
@@ -379,6 +383,60 @@ class TreeStore:
             while current != self._state["root_id"]:
                 rec=self._state["nodes"][current]; names.append(rec["name"]); current=rec["parent_id"]
             return "/" + "/".join(reversed(names))
+
+    def _query_state_snapshot(self) -> dict[str, Any]:
+        """Return one coherent detached state for the query layer."""
+        with self._lock:
+            return _state_copy(self._state)
+
+    def query(self, target: str | Node = "/", *, recursive: bool = True,
+              include_root: bool = False, predicate=None, **criteria):
+        """Create a query over a detached snapshot of ``target``.
+
+        By default the target itself is excluded (the root sentinel is thus
+        never returned) and its direct children are traversed in stored order.
+        Set ``include_root=True`` to include the target.  ``predicate`` may be
+        a callable receiving a :class:`Node` or a mapping of typed property
+        values; keyword criteria are equivalent mapping entries and ``type``
+        filters node type.
+        """
+        from .query import Query
+        state = self._query_state_snapshot()
+        node_id = self._resolve(state, target)
+        if criteria:
+            if predicate is None:
+                predicate = criteria
+            else:
+                # Query.where handles conjunction, while keeping this method
+                # convenient for callers using both forms.
+                return Query._from_snapshot(
+                    state, node_id, recursive=recursive,
+                    include_root=include_root, predicate=predicate,
+                ).where(criteria)
+        return Query._from_snapshot(
+            state, node_id, recursive=recursive,
+            include_root=include_root, predicate=predicate,
+        )
+
+    def index_property(self, property_name: str):
+        """Create or return a lazy secondary index for ``property_name``."""
+        from .query import PropertyIndex
+        with self._lock:
+            index = self._indexes.get(property_name)
+            if index is None:
+                index = PropertyIndex(self, property_name)
+                self._indexes[property_name] = index
+            return index
+
+    # Explicit aliases make the small index API discoverable without changing
+    # any existing CRUD operation signatures.
+    create_index = index_property
+    index = index_property
+    find = query
+
+    def drop_index(self, property_name: str) -> None:
+        with self._lock:
+            self._indexes.pop(property_name, None)
 
     def transaction(self) -> "Transaction":
         with self._lock:

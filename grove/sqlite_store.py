@@ -127,6 +127,13 @@ class SQLiteTreeStore(TreeStore):
         # subscriptions and re-entrant lock used by TreeStore.
         super().__init__(state=state)
         self._version = revision
+        # SQLite's data_version changes when another connection commits.  Keep
+        # it alongside the durable revision so the read fast path still
+        # notices out-of-band changes (including changes that do not update
+        # GROVE metadata) made by another handle.
+        self._data_version = self._conn.execute(
+            "PRAGMA data_version"
+        ).fetchone()[0]
 
     # -- SQLite setup and state decoding ---------------------------------
 
@@ -296,10 +303,46 @@ class SQLiteTreeStore(TreeStore):
     def _refresh(self) -> None:
         # Reading every public operation makes a long-lived instance observe a
         # commit made by another instance, rather than serving stale state.
+        #
+        # Most reads happen without a concurrent writer.  In that common case
+        # the metadata revision is a cheap cache validator: avoid materializing
+        # and validating every node when this instance already has that
+        # revision.  A changed (or malformed) revision falls through to the
+        # original coherent snapshot path, preserving cross-instance refresh
+        # and corruption checks.
         with self._lock:
+            self._ensure_open()
+            data_version = self._conn.execute(
+                "PRAGMA data_version"
+            ).fetchone()[0]
+            metadata = self._conn.execute(
+                "SELECT revision, root_id FROM metadata WHERE id = 1"
+            ).fetchone()
+            # Close the small validation window: a different connection may
+            # commit between the first data_version read and metadata query.
+            data_version_after = self._conn.execute(
+                "PRAGMA data_version"
+            ).fetchone()[0]
+            if (
+                data_version == self._data_version
+                and data_version_after == data_version
+                and metadata is not None
+            ):
+                revision, root_id = metadata
+                if (
+                    isinstance(revision, int)
+                    and not isinstance(revision, bool)
+                    and revision >= 0
+                    and root_id == self._state["root_id"]
+                    and revision == self._version
+                ):
+                    return
             state, revision = self._read_snapshot()
             self._state = state
             self._version = revision
+            self._data_version = self._conn.execute(
+                "PRAGMA data_version"
+            ).fetchone()[0]
 
     # -- TreeStore API with durable snapshots ----------------------------
 
@@ -308,6 +351,9 @@ class SQLiteTreeStore(TreeStore):
             state, revision = self._read_snapshot()
             self._state = state
             self._version = revision
+            self._data_version = self._conn.execute(
+                "PRAGMA data_version"
+            ).fetchone()[0]
             return Transaction(self, revision, copy.deepcopy(state))
 
     def get(self, target):
@@ -335,6 +381,10 @@ class SQLiteTreeStore(TreeStore):
     def subscribe(self, callback, node=None, *, recursive=True):
         self._refresh()
         return super().subscribe(callback, node, recursive=recursive)
+
+    def _query_state_snapshot(self):
+        self._refresh()
+        return super()._query_state_snapshot()
 
     # -- Atomic optimistic commit ----------------------------------------
 
@@ -431,6 +481,9 @@ class SQLiteTreeStore(TreeStore):
                 self._conn.commit()
                 self._state = tx._state
                 self._version = new_revision
+                self._data_version = self._conn.execute(
+                    "PRAGMA data_version"
+                ).fetchone()[0]
                 subscriptions = tuple(self._subscriptions)
             except sqlite3.IntegrityError as exc:
                 try: self._conn.rollback()
