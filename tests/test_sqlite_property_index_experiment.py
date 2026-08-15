@@ -136,3 +136,26 @@ def test_direct_scalar_query_scope_and_predicate_match_query(tmp_path: Path):
         assert db.lookup_scalar("score", 1, root.id, recursive=False).ids() == (parent.id,)
     finally:
         db.close()
+
+
+def test_direct_scalar_query_nonroot_target_include_root_matches_query(tmp_path: Path):
+    """A scoped SQL traversal must validate records against the database root.
+
+    This catches the distinction between the CTE traversal anchor and the
+    singleton root: passing the former to root-name validation rejects every
+    non-root scoped lookup (including a matching target with ``include_root``).
+    """
+    db = SQLiteScalarPropertyIndexExperiment(tmp_path / "nonroot-scope.db")
+    try:
+        outer = db.create("outer", properties={"score": 1})
+        child = db.create("child", parent=outer.id, properties={"score": 1})
+        db.create("miss", parent=outer.id, properties={"score": 2})
+        db.create_scalar_index("score")
+        for options in ({}, {"recursive": False}, {"include_root": True},
+                        {"recursive": False, "include_root": True}):
+            expected = db.query(outer.id, **options).where(score=1).ids()
+            actual = db.lookup_scalar("score", 1, outer.id, **options).ids()
+            assert actual == expected
+        assert db.lookup_scalar("score", 1, child.id, include_root=True).ids() == (child.id,)
+    finally:
+        db.close()

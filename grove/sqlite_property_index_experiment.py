@@ -624,7 +624,12 @@ class SQLiteScalarPropertyIndexExperiment(SQLiteTreeStore):
                            ORDER BY tree.order_path""",
                         (root_id, property_name, key[0], key[1]),
                     ).fetchall()
-                    records = self._decode_direct_records(rows, root_id=root_id)
+                    # ``root_id`` is the traversal target, not necessarily the
+                    # database root.  Name validation must still recognize only
+                    # the actual singleton root as having the empty-name
+                    # sentinel; an indexed non-root target can legitimately be
+                    # returned by ``include_root=True``.
+                    records = self._decode_direct_records(rows, root_id=source[1])
                     self._conn.commit()
                 except Exception:
                     self._conn.rollback()
