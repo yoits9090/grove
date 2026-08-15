@@ -72,3 +72,14 @@ A SQLite read-cache experiment uses `PRAGMA data_version` plus durable revision
 validation to avoid rematerializing unchanged snapshots. At 300 nodes/50 reads,
 the local comparison measured 54.422 ms baseline versus 0.232 ms cached median
 (234.5x); this is a machine-specific observational result.
+
+
+## Fourth-cycle evidence
+
+A disposable SQLite scalar-property index experiment stores typed scalar keys
+in an attached sidecar and rebuilds them atomically with tree commits. It
+preserves exact GROVE semantics by finalizing through the normal materialized
+query. At 200 nodes/50 lookups, the baseline materialized path measured 51.519
+ms median versus 67.136 ms for the indexed experiment (0.767x), demonstrating
+that an index without an accelerated snapshot/query executor is not yet useful.
+The experiment remains isolated pending a workload-driven design.

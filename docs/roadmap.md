@@ -18,8 +18,9 @@
    commit.
 5. Query API and secondary indexes, designed against a reference evaluator.
 6. **Complete reference phase:** snapshot queries, typed predicate filtering, and
-   lightweight in-memory property indexes. SQLite-backed durable property
-   indexes remain deferred until query workloads justify schema complexity.
+   lightweight in-memory property indexes. A disposable durable scalar-index
+   experiment exists; its current end-to-end path is slower because final
+   semantics still materialize the full tree, so it is not promoted to core.
 
 ## Later: ambitious experiments (disposable branches)
 
