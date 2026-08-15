@@ -265,9 +265,14 @@ class PropertyIndex:
             if value is _MISSING:
                 continue
             mutable.setdefault(_index_key(value), set()).add(node_id)
-        self._mapping = {key: frozenset(ids) for key, ids in mutable.items()}
+        mapping = {key: frozenset(ids) for key, ids in mutable.items()}
+        # Return this call's mapping object, not the mutable cache slot.  Two
+        # concurrent lookups can rebuild against different snapshots; using
+        # ``self._mapping`` in the return expression could hand a caller the
+        # other lookup's candidate set after an interleaving assignment.
+        self._mapping = mapping
         self._revision = getattr(self.store, "_version", None)
-        return self._mapping
+        return mapping
 
     def lookup(
         self,
