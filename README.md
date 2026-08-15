@@ -14,6 +14,8 @@ scale and feature breadth.
 - Absolute normalized paths (`/a/b`) and ID lookup.
 - JSON subtree export/import with explicit encodings for bytes, timestamps,
   and references.
+- Detached snapshot queries with typed predicates and lightweight in-memory
+  property indexes (`Query`, `PropertyIndex`).
 - A checksummed append-only whole-snapshot log with fsync and safe truncated-tail
   recovery (`PersistentTreeStore`).
 - An experimental SQLite WAL backend with relational `nodes`/`children` edges,
@@ -23,7 +25,9 @@ scale and feature breadth.
 
 The snapshot log is intentionally a conservative reference implementation. It
 rewrites the whole logical state at each commit and is unsuitable for large
-workloads. SQLite is the leading next storage experiment; see `docs/decisions.md`.
+workloads. SQLite is the current correctness-first storage experiment; see
+`docs/decisions.md`. Disposable durable scalar-index and logical-history
+experiments are documented separately and are not part of the public API.
 
 ## Quick start
 

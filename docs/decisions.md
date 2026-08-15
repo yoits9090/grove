@@ -43,7 +43,10 @@ cycle checks.
 
 - Single-process thread safety only; transactions conflict optimistically and
   readers receive detached snapshots.
-- No schema/index/query/history/snapshot API yet.
+- Query and in-memory property-index APIs are reference implementations; the
+  SQLite adapter still materializes complete snapshots for query execution.
+- No schema validation or durable history/snapshot API. The logical-history and
+  durable scalar-index prototypes are isolated, disposable experiments.
 - Every durable commit rewrites the complete state; no streaming import/export.
 - Unicode names are preserved but not case/normalization-folded.
 - Subscriptions are best-effort synchronous callbacks and currently report only

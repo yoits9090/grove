@@ -16,11 +16,13 @@
    tests before treating it as production-ready. Current adapter is complete
    enough for correctness comparison but still rewrites the logical tree per
    commit.
-5. Query API and secondary indexes, designed against a reference evaluator.
-6. **Complete reference phase:** snapshot queries, typed predicate filtering, and
-   lightweight in-memory property indexes. A disposable durable scalar-index
-   experiment exists; its current end-to-end path is slower because final
-   semantics still materialize the full tree, so it is not promoted to core.
+5. **Complete reference phase:** snapshot queries, typed predicate filtering,
+   and lightweight in-memory property indexes. The public query/index APIs are
+   intentionally detached-snapshot based and preserve primary child order.
+6. **Experiment only:** a disposable durable scalar-index prototype exists. Its
+   current end-to-end path is slower because final semantics still materialize
+   the full tree, so it is not promoted to core. Logical-history artifacts are
+   likewise isolated; no durable history API is part of the package.
 
 ## Later: ambitious experiments (disposable branches)
 
