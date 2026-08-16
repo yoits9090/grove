@@ -94,7 +94,7 @@ mutation, crash, and workload validation remains required.
 The suite now includes optional schema validation, immutable content-addressed
 snapshot tests, incremental Merkle tests, bounded SQLite writer lifecycle
 coverage, online backup tests, and malformed external-schema tests. At the
-current checkout it collects **109 tests** and passes under:
+current checkout it collects **146 tests** and passes under:
 
 ```bash
 uv run pytest -q
@@ -135,3 +135,19 @@ p95 of 515 dirty rows. A separate 1,440-operation differential matrix across
 seeds and families matched the full-rewrite oracle, including reopen checkpoints.
 The experiment is terminated without core promotion: wall-clock gains are
 modest/variable, broad edge costs vary, and it still materializes the old state.
+
+
+## Eighth-cycle evidence
+
+Current checkout collection is 146 tests across 16 test modules. The successful
+GitHub Actions dispatch `31915777962` ran the Python 3.10–3.14 correctness
+matrix plus the configured benchmark. All six jobs passed; artifacts recorded
+collection status zero, the commit, Python versions 3.10.20 through 3.14.7,
+and a shared `uv.lock` SHA-256. The benchmark manifest captured the explicit
+family/configuration/seed and command.
+
+The direct scalar adversarial matrix added sidecar corruption, stale rebuild,
+typed values, scope/predicate cases, and SIGKILL boundaries. Same-revision raw
+sidecar tampering remains a documented limitation because the experiment's
+revision metadata is not a checksum; this is one reason the experiment remains
+out of the public API.

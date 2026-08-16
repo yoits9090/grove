@@ -23,7 +23,7 @@ remote replication, and a broad query language are not current goals.
 4. **Complete:** deterministic model/differential tests, randomized
    deep/broad/skew/reopen workloads, typed round trips, transaction atomicity,
    and subprocess SQLite crash fixtures are checked in. The current suite
-   collects 109 tests and passes with `uv run pytest -q`.
+   collects 146 tests and passes with `uv run pytest -q`.
 
 ## Delivered: SQLite correctness and lifecycle slice
 
