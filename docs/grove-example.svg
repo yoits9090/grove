@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="136" viewBox="0 0 700 136" role="img" aria-labelledby="title desc">
+  <title id="title">GROVE tree inspection</title>
+  <desc id="desc">A GROVE CLI tree command and its object-tree output.</desc>
+  <rect width="700" height="136" rx="8" fill="#111827"/>
+  <text x="24" y="31" fill="#86efac" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14">$</text>
+  <text x="43" y="31" fill="#f8fafc" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14">uv run grove demo.log tree /organizations</text>
+  <text x="24" y="59" xml:space="preserve" fill="#e5e7eb" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14">organizations [object] &lt;organizations&gt;</text>
+  <text x="24" y="83" xml:space="preserve" fill="#e5e7eb" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14">  acme [organization] &lt;acme&gt;</text>
+  <text x="24" y="107" xml:space="preserve" fill="#e5e7eb" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14">    alice [object] &lt;alice&gt;</text>
+</svg>

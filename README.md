@@ -1,92 +1,103 @@
 # GROVE
 
-GROVE is a small, typed, persistent object-tree database. This repository is
-currently the **0.1 vertical slice**, not the complete mission: it prioritizes
-clear invariants, deterministic behavior, and crash-testable persistence over
-scale and feature breadth.
+[![CI](https://github.com/yoits9090/grove/actions/workflows/evals.yml/badge.svg)](https://github.com/yoits9090/grove/actions/workflows/evals.yml)
+
+GROVE is a small, typed, persistent object-tree database. Nodes are independently addressable objects with stable IDs, names, types, properties, one parent, and ordered children.
+
+<p align="center">
+  <img src="docs/grove-example.svg" alt="GROVE CLI command and tree output" width="900">
+</p>
+
+The repository is a correctness-first **0.1 vertical slice**. It is not the complete database vision: the implementation favors explicit invariants, deterministic behavior, and crash-tested local durability over pretending to solve every scale or distribution problem.
 
 ## Current slice
 
-- Stable opaque string IDs, names, types, detached node views, and properties.
-- Exactly one root, ordered children, unique sibling names, and cycle-safe moves.
-- Create, read, update, delete, rename, move, copy, transactions, and optimistic
-  transaction conflict detection.
-- Absolute normalized paths (`/a/b`) and ID lookup.
-- JSON subtree export/import with explicit encodings for bytes, timestamps,
-  and references.
-- Detached snapshot queries with typed predicates and lightweight in-memory
-  property indexes (`Query`, `PropertyIndex`).
-- Optional schemas for node types and property constraints, validated atomically
-  on create, update, and import (`Schema`, `SchemaValidationError`).
-- A checksummed append-only whole-snapshot log with fsync and safe truncated-tail
-  recovery (`PersistentTreeStore`).
-- An experimental SQLite WAL backend with relational `nodes`/`children` edges,
-  durable revisions, and cross-instance optimistic conflict detection
-  (`SQLiteTreeStore`).
-- A small durable logical history API (`SQLiteHistory`, `Snapshot`) built from
-  SQLite online-backup artifacts; see `docs/logical-history-experiment.md`.
-- Basic synchronous change subscriptions and a `grove` tree/get/export CLI.
+- Stable opaque IDs, derived absolute paths, ordered children, unique sibling names, and cycle-safe moves.
+- Create, read, update, delete, rename, move, copy, transactions, optimistic conflict detection, and subscriptions.
+- Typed properties including null, booleans, numbers, strings, bytes, timestamps, arrays, maps, and non-owning references.
+- JSON subtree import/export with explicit tagged encodings.
+- Detached snapshot queries, typed predicates, lazy traversal, and lightweight in-memory property indexes.
+- Optional schemas for node types and property constraints with atomic validation.
+- A checksummed append-only snapshot backend and an experimental SQLite WAL backend with relational ordered edges.
+- A small SQLite online-backup history API (`SQLiteHistory`, `Snapshot`).
+- A CLI for tree inspection, node retrieval, and export.
 
-The snapshot log is intentionally a conservative reference implementation. It
-rewrites the whole logical state at each commit and is unsuitable for large
-workloads. SQLite is the current correctness-first storage experiment; see
-`docs/decisions.md`. The durable scalar-index experiment remains private; logical history is a
-small public API with deliberately narrow guarantees.
+The SQLite backend and several advanced storage ideas remain explicitly scoped experiments. See [`docs/roadmap.md`](docs/roadmap.md) and [`docs/decisions.md`](docs/decisions.md).
 
 ## Quick start
 
 ```python
-from grove import TreeStore, Reference
+from grove import TreeStore
 
 store = TreeStore()
-orgs = store.create("organizations")
-acme = store.create("acme", parent=orgs.id, type="organization")
-alice = store.create("alice", parent="/organizations/acme", properties={"active": True})
-store.rename(alice.id, "alice-admin")
+organizations = store.create("organizations")
+acme = store.create("acme", parent=organizations.id, type="organization")
+alice = store.create(
+    "alice",
+    parent=acme.id,
+    type="user",
+    properties={"active": True},
+)
+
 store.move(alice.id, "/organizations")
 print(store.path(alice.id))
-print(store.export_json("/organizations", indent=2))
+# /organizations/alice
 ```
 
-Durable use:
+Durable local storage:
 
 ```python
-from grove import PersistentTreeStore
-with PersistentTreeStore("grove.log") as db:
+from grove import SQLiteTreeStore
+
+with SQLiteTreeStore("grove.db") as db:
     db.create("system")
-# Reopening recovers the last complete checksum-verified frame.
 ```
 
-Run tests with `uv run pytest`. The CLI is `uv run grove DB tree`.
+CLI:
+
+```bash
+uv run grove grove.db tree
+uv run grove grove.db get /system
+```
 
 ## Optional schemas
 
-Pass a `Schema` when constructing any store (including `PersistentTreeStore`
-and `SQLiteTreeStore`) to enforce node type and property constraints. A
-shorthand declaration maps property names to Python types; the explicit form
-adds required properties and rejects unknown properties:
+Pass a `Schema` to validate node types and properties atomically:
 
 ```python
 from grove import Schema, SchemaValidationError, TreeStore
 
 schema = Schema({
     "person": {
-        "properties": {"name": str, "age": {"type": int, "required": True}},
+        "properties": {
+            "name": {"type": str, "required": True},
+            "age": int,
+        },
         "required": ["name"],
         "allow_extra": False,
     },
 })
+
 db = TreeStore(schema=schema)
 db.create("alice", type="person", properties={"name": "Alice", "age": 42})
-try:
-    db.create("bad", type="person", properties={"name": 7, "age": 1})
-except SchemaValidationError:
-    pass  # no node was created
 ```
 
-A schema with declared types rejects undeclared types by default (the root
-sentinel is always allowed). Set `allow_unknown_types=True` to constrain only
-declared types. Property constraints may be Python types, tuples of types,
-`{"type": ...}` declarations, `enum`/`values`, or a callable predicate.
-Validation is performed before each mutation is committed; failed imports and
-updates are atomic, including when used inside an explicit transaction.
+## proof
+
+The current checkout has 146 collected tests covering model-based operations, randomized trees, typed round trips, malformed and partial persistence, SQLite WAL behavior, transaction conflicts, subprocess crash recovery, schema validation, query snapshots, lazy deep/broad traversal, logical history, and isolated storage experiments.
+
+```bash
+uv run python -m pytest -q
+# 146 passed
+```
+
+GitHub Actions runs the correctness suite on Python 3.10 through 3.14 and stores reproducible test and benchmark artifacts. Benchmark numbers are recorded as observations with machine, seed, configuration, and commit metadata; they are not presented as universal performance claims.
+
+## Development notes
+
+- The in-memory `TreeStore` is the reference model.
+- `PersistentTreeStore` is the conservative crash-testable persistence baseline.
+- `SQLiteTreeStore` is the local durable scale experiment: WAL, foreign keys, ordered relational edges, bounded writer waits, online backup, and durable revisions.
+- Content-addressed snapshots, Merkle hashing, incremental SQLite writes, and direct SQL indexes live under `experiments/` and are not silently promoted into the public API.
+
+Run the full suite with `uv run python -m pytest -q`. Reproducible workloads live in `benchmarks/`.
