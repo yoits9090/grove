@@ -82,17 +82,6 @@ db = TreeStore(schema=schema)
 db.create("alice", type="person", properties={"name": "Alice", "age": 42})
 ```
 
-## proof
-
-The current checkout has 146 collected tests covering model-based operations, randomized trees, typed round trips, malformed and partial persistence, SQLite WAL behavior, transaction conflicts, subprocess crash recovery, schema validation, query snapshots, lazy deep/broad traversal, logical history, and isolated storage experiments.
-
-```bash
-uv run python -m pytest -q
-# 146 passed
-```
-
-GitHub Actions runs the correctness suite on Python 3.10 through 3.14 and stores reproducible test and benchmark artifacts. Benchmark numbers are recorded as observations with machine, seed, configuration, and commit metadata; they are not presented as universal performance claims.
-
 ## Development notes
 
 - The in-memory `TreeStore` is the reference model.
